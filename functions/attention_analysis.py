@@ -15,7 +15,6 @@ FOLDER_TO_KEYS = {
     "attack": [
         "harm_attack",
         "action_attack",
-        # "context_attack_jailbreak" # if needed
     ],
     "attack_jailbreak": [
         "harm_jailbreak",
