@@ -45,7 +45,7 @@ FOLDER_TO_KEYS = {
 # ----------------------------------------------------------------------
 def init_logger(
     log_file="analyses/3e_results_attention/attention_analysis.log",
-    console_level=logging.INFO,
+    console_level=logging.WARNING,  # only warnings/errors to console
     file_level=logging.DEBUG
 ):
     """
@@ -53,13 +53,13 @@ def init_logger(
     """
     os.makedirs(os.path.dirname(log_file), exist_ok=True)
     logger = logging.getLogger(__name__)
-    logger.setLevel(logging.DEBUG)  # master level
+    logger.setLevel(logging.DEBUG)  # Master level (allows all messages up to DEBUG internally)
 
     # Remove any existing handlers (helpful if re-initializing in a notebook)
     for handler in logger.handlers[:]:
         logger.removeHandler(handler)
 
-    # File handler
+    # File handler (full debug logs to file)
     fh = logging.FileHandler(log_file, mode="w")
     fh.setLevel(file_level)
     fh_formatter = logging.Formatter(
@@ -68,14 +68,16 @@ def init_logger(
     fh.setFormatter(fh_formatter)
     logger.addHandler(fh)
 
-    # Console handler
+    # Console handler (only warnings/errors to console)
     ch = logging.StreamHandler()
     ch.setLevel(console_level)
     ch_formatter = logging.Formatter("[%(levelname)s] %(message)s")
     ch.setFormatter(ch_formatter)
     logger.addHandler(ch)
 
-    logger.info("Logger initialized for attention analysis.")
+    # Minimal console message
+    logger.info("Logger initialized for attention analysis (console=WARN, file=DEBUG).")
+
     return logger
 
 
@@ -128,7 +130,6 @@ def find_token_positions_flexible(tokenizer, input_ids, phrase, logger=None, log
       1) direct sublist
       2) leading-space sublist
       3) substring offset approach
-    Logs each step for debugging.
     """
     phrase = phrase.strip()
     if not phrase:
@@ -136,31 +137,25 @@ def find_token_positions_flexible(tokenizer, input_ids, phrase, logger=None, log
             logger.debug(f"{log_prefix}Empty phrase => no match.")
         return []
 
-    # decode the full text for reference
-    if logger:
-        full_text = tokenizer.decode(input_ids, skip_special_tokens=True)
-        logger.trace(f"{log_prefix}Full text: '{full_text}'")
-        logger.trace(f"{log_prefix}Trying phrase: '{phrase}'")
-
-    # 1) direct
+    # 1) direct sublist
     direct = try_sublist_match(tokenizer, input_ids, phrase)
-    if logger:
-        logger.trace(f"{log_prefix}Direct sublist -> positions={direct}")
     if direct:
+        if logger:
+            logger.debug(f"{log_prefix}Direct sublist -> positions={direct}")
         return direct
 
-    # 2) leading space
+    # 2) leading space sublist
     lead_phrase = " " + phrase
     lead = try_sublist_match(tokenizer, input_ids, lead_phrase)
-    if logger:
-        logger.trace(f"{log_prefix}Leading-space sublist -> phrase='{lead_phrase}', positions={lead}")
     if lead:
+        if logger:
+            logger.debug(f"{log_prefix}Leading-space sublist -> positions={lead}")
         return lead
 
     # 3) substring approach
     sub_pos = substring_offset_mapping(tokenizer, input_ids, phrase)
     if logger:
-        logger.trace(f"{log_prefix}Substring fallback -> positions={sub_pos}")
+        logger.debug(f"{log_prefix}Substring fallback -> positions={sub_pos}")
     return sub_pos
 
 
@@ -182,13 +177,6 @@ def run_attention_analysis(
       2. Matches relevant tokens based on `prompt_type`
       3. Computes fraction of attention spent on the matched tokens
       4. Saves CSV results to `output_dir`
-
-    :param prompt_type: Which subfolder / set of keys to analyze (e.g. "attack_jailbreak").
-    :param base_dir: Where your .pt files are located (e.g. "output/extractions/gemma9bit").
-    :param extracted_strings_file: Path to the JSON with extracted prompts/phrases.
-    :param output_dir: Where results (CSV + logs) should be saved.
-    :param model_name: Used to load the tokenizer for decoding.
-    :param logger: A logger object (optional). If None, a minimal logger is used.
     """
 
     # If no logger given, build a minimal one
@@ -196,14 +184,16 @@ def run_attention_analysis(
         logger = logging.getLogger(__name__)
         if not logger.handlers:
             logger.addHandler(logging.StreamHandler())
-            logger.setLevel(logging.INFO)
+            logger.setLevel(logging.WARNING)
 
     logger.info(f"=== Starting attention analysis for PROMPT_TYPE={prompt_type} ===")
+
     os.makedirs(output_dir, exist_ok=True)
 
     # 4a) Load your extracted strings
     if not os.path.isfile(extracted_strings_file):
         raise FileNotFoundError(f"Could not find extracted_strings.json at {extracted_strings_file}")
+
     with open(extracted_strings_file, "r", encoding="utf-8") as f:
         extracted_data = json.load(f)
 
@@ -225,22 +215,22 @@ def run_attention_analysis(
     relevant_keys = FOLDER_TO_KEYS.get(prompt_type, [])
     logger.info(f"Relevant phrase keys for '{prompt_type}': {relevant_keys}")
 
-    # We'll store results in a list of dicts
     results_rows = []
 
     # 4e) Process each .pt file
-    for pt_file in tqdm(pt_files, desc=f"Folder={prompt_type}", ncols=80):
-        logger.trace(f"Loading .pt file: {pt_file}")
+    # Disable tqdm output
+    for pt_file in tqdm(pt_files, desc=f"Folder={prompt_type}", ncols=80, disable=True):
+        logger.debug(f"Loading .pt file: {pt_file}")
         data_dict = torch.load(pt_file, map_location="cpu")
 
-        #  i) Check we have attentions and input_ids
+        # i) Check we have attentions and input_ids
         all_attentions = data_dict.get("attentions", None)
         input_ids_tensor = data_dict.get("input_ids", None)
         if all_attentions is None or input_ids_tensor is None:
             logger.warning(f"File missing 'attentions' or 'input_ids': {pt_file}. Skipping.")
             continue
 
-        #  ii) Convert each layer's attention to float32
+        # ii) Convert each layer's attention to float32
         layer_names = sorted(all_attentions.keys(), key=lambda x: int(x.split("_")[-1]))
         attentions_list = []
         for lname in layer_names:
@@ -249,63 +239,45 @@ def run_attention_analysis(
         n_layers = len(attentions_list)
         batch_size, seq_len = input_ids_tensor.shape
 
-        #  iii) Read the "original_indices" from the data_dict
-        #  NOTE: This is crucial for correctness if your data was a subset or not fully sequential.
-        #        If your prior inference script saved out_dict["original_indices"], use that.
-        #        Otherwise, we fall back to deriving from the filename.
+        # iii) Determine global indices from .pt
         original_indices = data_dict.get("original_indices", None)
-
         if not original_indices:
-            # Fallback to naming convention, but this only works if your data was contiguous
+            # fallback from filename
             basename = os.path.basename(pt_file).replace(".pt", "")
             parts = basename.split("_")  # e.g. ["activations","00000","00004"]
             start_i = int(parts[1])
-            # In that case, "global_idx" = start_i + i_in_batch
             logger.debug(f"Fallback indexing: using filename-based start_i={start_i}")
-        else:
-            # We'll trust "original_indices" from the prior script
-            logger.trace(f"Using 'original_indices' from .pt file: {original_indices}")
 
-        #  iv) For each sample in the batch
+        # iv) For each sample in the batch
         for i_in_batch in range(batch_size):
             if original_indices:
                 global_idx = original_indices[i_in_batch]
             else:
                 global_idx = start_i + i_in_batch
 
-            # Double check we have that row in extracted_data
             if global_idx >= len(extracted_data):
-                logger.debug(
-                    f"Global idx={global_idx} exceeds extracted_data length={len(extracted_data)}. Skipping."
-                )
+                logger.debug(f"Global idx={global_idx} > extracted_data size={len(extracted_data)}. Skipping.")
                 continue
-
-            # For reference, decode the prompt text
-            example_ids = input_ids_tensor[i_in_batch]
-            if logger.isEnabledFor(logging.DEBUG):
-                decoded_text = tokenizer.decode(example_ids, skip_special_tokens=True)
-                logger.trace(f"Global idx={global_idx}, Decoded prompt text: '{decoded_text}'")
 
             # We'll only match the keys relevant to this folder
             phrase_map = extracted_data[global_idx]
 
-            #  v) For each relevant key, find matched positions
+            # v) For each relevant key, find matched positions
             phrase_positions_map = {}
             for pk in relevant_keys:
                 phrase_str = phrase_map.get(pk, "")
                 log_prefix = f"[glob_idx={global_idx}, key={pk}] "
                 matched_positions = find_token_positions_flexible(
                     tokenizer,
-                    example_ids,
+                    input_ids_tensor[i_in_batch],
                     phrase_str,
                     logger=logger,
                     log_prefix=log_prefix
                 )
-                phrase_positions_map[pk] = sorted(matched_positions)
-                logger.trace(f"{log_prefix} => matched_positions={matched_positions}")
+                phrase_positions_map[pk] = matched_positions
 
-            #  vi) Compute fraction of attention
-            #      shape of each `attn_l[i_in_batch]` is [n_heads, seq_len, seq_len]
+            # vi) Compute fraction of attention
+            # shape of each attn_l[i_in_batch] is [n_heads, seq_len, seq_len]
             for layer_idx, attn_batch in enumerate(attentions_list):
                 attn_l = attn_batch[i_in_batch]  # shape [n_heads, seq_len, seq_len]
                 n_heads = attn_l.shape[0]
@@ -324,7 +296,6 @@ def run_attention_analysis(
                                 "fraction_attention": 0.0
                             }
                             results_rows.append(row)
-                            logger.debug(f"[L{layer_idx}H{h_idx}, key={pk}] => fraction=0.0 (no matches)")
                             continue
 
                         fraction_vals = []
@@ -335,8 +306,8 @@ def run_attention_analysis(
                             else:
                                 phrase_sum = attn_head[q, matched_pos].sum().item()
                                 fraction_vals.append(phrase_sum / row_sum)
-
                         mean_fraction = float(np.mean(fraction_vals))
+
                         row = {
                             "folder": prompt_type,
                             "global_idx": global_idx,
@@ -346,7 +317,6 @@ def run_attention_analysis(
                             "fraction_attention": mean_fraction
                         }
                         results_rows.append(row)
-                        logger.trace(f"[L{layer_idx}H{h_idx}, key={pk}] => fraction={mean_fraction:.4f}")
 
     # 4f) Convert to DataFrame and save
     df = pd.DataFrame(results_rows)
