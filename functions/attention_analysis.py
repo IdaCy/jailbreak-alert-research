@@ -139,13 +139,13 @@ def find_token_positions_flexible(tokenizer, input_ids, phrase, logger=None, log
     # decode the full text for reference
     if logger:
         full_text = tokenizer.decode(input_ids, skip_special_tokens=True)
-        logger.debug(f"{log_prefix}Full text: '{full_text}'")
-        logger.debug(f"{log_prefix}Trying phrase: '{phrase}'")
+        logger.trace(f"{log_prefix}Full text: '{full_text}'")
+        logger.trace(f"{log_prefix}Trying phrase: '{phrase}'")
 
     # 1) direct
     direct = try_sublist_match(tokenizer, input_ids, phrase)
     if logger:
-        logger.debug(f"{log_prefix}Direct sublist -> positions={direct}")
+        logger.trace(f"{log_prefix}Direct sublist -> positions={direct}")
     if direct:
         return direct
 
@@ -153,14 +153,14 @@ def find_token_positions_flexible(tokenizer, input_ids, phrase, logger=None, log
     lead_phrase = " " + phrase
     lead = try_sublist_match(tokenizer, input_ids, lead_phrase)
     if logger:
-        logger.debug(f"{log_prefix}Leading-space sublist -> phrase='{lead_phrase}', positions={lead}")
+        logger.trace(f"{log_prefix}Leading-space sublist -> phrase='{lead_phrase}', positions={lead}")
     if lead:
         return lead
 
     # 3) substring approach
     sub_pos = substring_offset_mapping(tokenizer, input_ids, phrase)
     if logger:
-        logger.debug(f"{log_prefix}Substring fallback -> positions={sub_pos}")
+        logger.trace(f"{log_prefix}Substring fallback -> positions={sub_pos}")
     return sub_pos
 
 
@@ -230,7 +230,7 @@ def run_attention_analysis(
 
     # 4e) Process each .pt file
     for pt_file in tqdm(pt_files, desc=f"Folder={prompt_type}", ncols=80):
-        logger.debug(f"Loading .pt file: {pt_file}")
+        logger.trace(f"Loading .pt file: {pt_file}")
         data_dict = torch.load(pt_file, map_location="cpu")
 
         #  i) Check we have attentions and input_ids
@@ -264,7 +264,7 @@ def run_attention_analysis(
             logger.debug(f"Fallback indexing: using filename-based start_i={start_i}")
         else:
             # We'll trust "original_indices" from the prior script
-            logger.debug(f"Using 'original_indices' from .pt file: {original_indices}")
+            logger.trace(f"Using 'original_indices' from .pt file: {original_indices}")
 
         #  iv) For each sample in the batch
         for i_in_batch in range(batch_size):
@@ -284,7 +284,7 @@ def run_attention_analysis(
             example_ids = input_ids_tensor[i_in_batch]
             if logger.isEnabledFor(logging.DEBUG):
                 decoded_text = tokenizer.decode(example_ids, skip_special_tokens=True)
-                logger.debug(f"Global idx={global_idx}, Decoded prompt text: '{decoded_text}'")
+                logger.trace(f"Global idx={global_idx}, Decoded prompt text: '{decoded_text}'")
 
             # We'll only match the keys relevant to this folder
             phrase_map = extracted_data[global_idx]
@@ -302,7 +302,7 @@ def run_attention_analysis(
                     log_prefix=log_prefix
                 )
                 phrase_positions_map[pk] = sorted(matched_positions)
-                logger.debug(f"{log_prefix} => matched_positions={matched_positions}")
+                logger.trace(f"{log_prefix} => matched_positions={matched_positions}")
 
             #  vi) Compute fraction of attention
             #      shape of each `attn_l[i_in_batch]` is [n_heads, seq_len, seq_len]
@@ -346,7 +346,7 @@ def run_attention_analysis(
                             "fraction_attention": mean_fraction
                         }
                         results_rows.append(row)
-                        logger.debug(f"[L{layer_idx}H{h_idx}, key={pk}] => fraction={mean_fraction:.4f}")
+                        logger.trace(f"[L{layer_idx}H{h_idx}, key={pk}] => fraction={mean_fraction:.4f}")
 
     # 4f) Convert to DataFrame and save
     df = pd.DataFrame(results_rows)
