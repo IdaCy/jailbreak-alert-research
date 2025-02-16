@@ -5,13 +5,6 @@
 
 https://arxiv.org/abs/2406.11717
 
-either, in jailbreak, a model is kept in default, non-refusal state, or safety mechanism any sorts of response and surpressed or overridden
-- first: We would instead have to detect an absence of safety activation when it should be present (i.e., anomaly detection for missing safety signals).
-- second: this project! - find, what: refusal predicted -> overridden | state of conflict
-! worst case: just detecting harmful words instead !
-
-**hypotheses: 1 refusal mech (circuits/vecs/) 
-internal policy for refusal satisfied through  jailbreaks so that **
 **hypotheses: 1 different lack of internal security mech from different jailbreaks; 2 internal conflicts from jailbreaks**
 **aim: alert from conflicts - meaning, conflict+nonrefusal=alarm**
 
