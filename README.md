@@ -1,5 +1,5 @@
 
-# topics
+# topics TWO
 
 ## REFUSAL / SECURITY - all jailbreaking methods
 
@@ -9,6 +9,7 @@ https://arxiv.org/abs/2406.11717
 **aim: alert from conflicts - meaning, conflict+nonrefusal=alarm**
 
 finding what security mechanisms a model has already internally
+```
 - dividing possible directions - different people looking for different directions - and explaining them externally, and the MI people explaining them internally
 - hypothesis: every type of jailbreak is identifiable in the internal representations
 - training linear classifiers on it
@@ -24,6 +25,7 @@ finding what security mechanisms a model has already internally
 -> 9. A) some of us develop an alert system from these results
 -> 9. B) some of us develop the Pranav website
 => down to: we develop a mechanism attached to an LLM that flags - alarm triggered - that jailbroken
+```
 
 ### types
 
