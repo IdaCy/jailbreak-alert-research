@@ -7,8 +7,13 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 # 1. Configuration and Setup
 # ------------------------------------------------------------------------
 
-PROMPT_FILE = "data/ReNeLLM/jailbreaks/jb100.csv"
-OUTPUT_DIR = "outputs/jailbreak"
+# Run what input data? - only variable to set
+input_data = "neutr100"
+
+# Define files
+input_type = "jailbreak" if "jb" in input_data else "neutral"
+PROMPT_FILE = "data/ReNeLLM/" + input_type + "/" + input_data + ".csv"
+OUTPUT_DIR = "outputs/" + input_type
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 MODEL_NAME = "google/gemma-2b"
 
