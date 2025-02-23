@@ -1,0 +1,25 @@
+#!/bin/bash
+#PBS -N run_pca
+#PBS -l select=1:ncpus=8:ngpus=1:mem=40gb
+#PBS -l walltime=14:00:00
+#PBS -o logs/run_pca.out
+#PBS -e logs/run_pca.err
+
+# Move to the directory from which job submitted
+cd $PBS_O_WORKDIR
+
+echo "$(date "+%Y-%m-%d %H:%M:%S") - run_pca started" >> logs/run_times.log
+
+# Paths
+CONTAINER_PATH="$PBS_O_WORKDIR/containers/mechinterp_cont.sif"
+SCRIPT_PATH="$PBS_O_WORKDIR/scripts/analyses/1_diffs/run_pca.py"
+
+# Run the script inside the container
+singularity exec --nv \
+    -B "$HOME/typo-correct-subspaces:/workspace" \
+    -B "/rds/general/user/ifc24/home/typo-correct-subspaces/data:/data" \
+    "$CONTAINER_PATH" \
+    python "$SCRIPT_PATH" --tensor-parallel
+
+echo "$(date "+%Y-%m-%d %H:%M:%S") - run_pca finished" >> logs/run_times.log
+nvidia-smi --query-gpu=name --format=csv,noheader
