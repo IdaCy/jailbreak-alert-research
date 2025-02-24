@@ -82,3 +82,4 @@ We welcome contributions! If you have ideas for improving jailbreak detection, s
 - [DeepInception](https://arxiv.org/abs/2311.03191)
 - [CodeChameleon](https://arxiv.org/abs/2402.16717)
 
+#contributions
