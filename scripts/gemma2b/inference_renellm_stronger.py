@@ -28,17 +28,21 @@ ERROR_LOG = globals().get("ERROR_LOG", "logs/stronger_run_errors.log")
 os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
 os.makedirs(os.path.dirname(ERROR_LOG), exist_ok=True)
 
-# NEW: Optionally limit how many total samples to process
+# Limit how many total samples to process
 NUM_SAMPLES = globals().get("NUM_SAMPLES", None)
 if isinstance(NUM_SAMPLES, str) and NUM_SAMPLES.isdigit():
     NUM_SAMPLES = int(NUM_SAMPLES)
 
-# NEW: Hugging Face token from environment
+# Hugging Face token from environment
 HF_TOKEN = os.environ.get("HF_TOKEN", None)
 if HF_TOKEN:
-    print(f"Using HF_TOKEN from environment: {HF_TOKEN[:8]}... (redacted)")
+    print(f"Using HF_TOKEN from environment: {HF_TOKEN[:8]}... (start bit)")
 else:
-    print("No HF_TOKEN in environment. Attempting to load model without auth token.")
+    HF_TOKEN = globals().get("HF_TOKEN", None)
+    if HF_TOKEN:
+        print(f"Using HF_TOKEN from globals: {HF_TOKEN[:8]}... (start bit)")
+    else:
+        print("No HF_TOKEN found in environment or globals. Attempting to proceed without auth token.")
 
 # ------------------------------------------------------------------------
 # 2. Load Data
