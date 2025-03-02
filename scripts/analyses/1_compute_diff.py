@@ -4,8 +4,8 @@ import torch
 from tqdm import tqdm
 
 # Directories containing the separate .pt files from your new inference script
-NEUTRAL_DIR = globals().get("NEUTRAL_DIR", "outputs/jailbreak_neutral")
-JB_DIR      = globals().get("JB_DIR", "outputs/jailbreak_jb")
+NEUTRAL_DIR = globals().get("NEUTRAL_DIR", "outputs/extractions/jailbreak_neutral")
+JB_DIR      = globals().get("JB_DIR", "outputs/extractions/jailbreak")
 DIFF_DIR    = globals().get("DIFF_DIR", "outputs/differences")
 os.makedirs(DIFF_DIR, exist_ok=True)
 
