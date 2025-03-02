@@ -8,26 +8,24 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig
 # Configuration
 # ------------------------------------------------------------------------
 
-NEUTRAL_FILE = "/workspace/prompts/preprocessed/neutralQs.csv"
-JAILBREAK_FILE = "/workspace/prompts/preprocessed/jbQs.csv"
-OUTPUT_DIR = "/workspace/gemma/extractions"
+CLEAN_FILE = globals().get("CLEAN_FILE", "/workspace/prompts/preprocessed/cleanQs.csv")
+TYPO_FILE = globals().get("TYPO_FILE", "/workspace/prompts/preprocessed/typoQs.csv")
+OUTPUT_DIR = globals().get("OUTPUT_DIR", "/workspace/gemma/extractions")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# **POINT THIS TO YOUR LOCAL GEMMA2-2B CHECKPOINT FOLDER**
-MODEL_NAME = "google/gemma-2-2b"
+MODEL_NAME = globals().get("MODEL_NAME", "google/gemma-2-2b")
 HF_TOKEN = os.environ.get("HF_TOKEN", None)
 if HF_TOKEN is None:
     raise ValueError("No Hugging Face token found in environment variable HF_TOKEN.")
 
-BATCH_SIZE = 16
-USE_BFLOAT16 = True  # Use bfloat16 for storage efficiency
-MAX_SEQ_LENGTH = 512
-TOP_K_LOGITS = 10  # Store only top-10 logits per token
+BATCH_SIZE = globals().get("BATCH_SIZE", 16)
+USE_BFLOAT16 = globals().get("USE_BFLOAT16", True)
+MAX_SEQ_LENGTH = globals().get("MAX_SEQ_LENGTH", 512)
+TOP_K_LOGITS = globals().get("TOP_K_LOGITS", 10)
 
-# Layers to extract
-EXTRACT_HIDDEN_LAYERS = [0, 1, 2, 3, 4, 5, 10, 15, 20, 25]
-EXTRACT_ATTENTION_LAYERS = [10, 15, 20, 25]  # Attention stored only in these layers
-FINAL_LAYER = 25  # Logits & probabilities from final layer
+EXTRACT_HIDDEN_LAYERS = globals().get("EXTRACT_HIDDEN_LAYERS", [0, 1, 2, 3, 4, 5, 10, 15, 20, 25])
+EXTRACT_ATTENTION_LAYERS = globals().get("EXTRACT_ATTENTION_LAYERS", [10, 15, 20, 25])
+FINAL_LAYER = globals().get("FINAL_LAYER", 25)
 
 # ------------------------------------------------------------------------
 # Load Model and Tokenizer
@@ -78,28 +76,28 @@ def load_sentences(file_path):
     with open(file_path, "r", encoding="utf-8") as f:
         return [line.strip() for line in f.readlines() if line.strip()]
 
-neutral_texts = load_sentences(NEUTRAL_FILE)
-jb_texts = load_sentences(JAILBREAK_FILE)
+clean_texts = load_sentences(CLEAN_FILE)
+typo_texts = load_sentences(TYPO_FILE)
 
-if len(neutral_texts) != len(jb_texts):
-    raise ValueError("Mismatch between number of neutral and jb prompts!")
+if len(clean_texts) != len(typo_texts):
+    raise ValueError("Mismatch between number of clean and typo prompts!")
 
-print(f"Loaded {len(neutral_texts)} samples for inference.")
+print(f"Loaded {len(clean_texts)} samples for inference.")
 
 # ------------------------------------------------------------------------
 # Identify Relevant Token Indices
 # ------------------------------------------------------------------------
-def get_relevant_token_indices_pair(neutral_text, jb_text, tokenizer, window=3):
-    """Find token positions that differ between neutral vs. jb versions."""
-    tokens_neutral = tokenizer.tokenize(neutral_text)
-    tokens_jb = tokenizer.tokenize(jb_text)
-    sm = difflib.SequenceMatcher(None, tokens_neutral, tokens_jb)
+def get_relevant_token_indices_pair(clean_text, typo_text, tokenizer, window=3):
+    """Find token positions that differ between clean vs. typo versions."""
+    tokens_clean = tokenizer.tokenize(clean_text)
+    tokens_typo = tokenizer.tokenize(typo_text)
+    sm = difflib.SequenceMatcher(None, tokens_clean, tokens_typo)
 
-    diff_indices_neutral, diff_indices_jb = [], []
+    diff_indices_clean, diff_indices_typo = [], []
     for tag, i1, i2, j1, j2 in sm.get_opcodes():
         if tag != 'equal':
-            diff_indices_neutral.extend(range(i1, i2))
-            diff_indices_jb.extend(range(j1, j2))
+            diff_indices_clean.extend(range(i1, i2))
+            diff_indices_typo.extend(range(j1, j2))
 
     def expand_indices(indices, max_len):
         expanded = set()
@@ -110,10 +108,10 @@ def get_relevant_token_indices_pair(neutral_text, jb_text, tokenizer, window=3):
         return sorted(expanded)
 
     return (
-        expand_indices(diff_indices_neutral, len(tokens_neutral)),
-        tokens_neutral,
-        expand_indices(diff_indices_jb, len(tokens_jb)),
-        tokens_jb,
+        expand_indices(diff_indices_clean, len(tokens_clean)),
+        tokens_clean,
+        expand_indices(diff_indices_typo, len(tokens_typo)),
+        tokens_typo,
     )
 
 # ------------------------------------------------------------------------
@@ -206,31 +204,31 @@ def capture_activations(text_batch, indices_batch):
 # ------------------------------------------------------------------------
 # Main Loop: Process All Prompts
 # ------------------------------------------------------------------------
-print("Starting inference & extraction of relevant activations for neutral & jb prompts...")
+print("Starting inference & extraction of relevant activations for clean & typo prompts...")
 
-for start_idx in range(0, len(neutral_texts), BATCH_SIZE):
+for start_idx in range(0, len(clean_texts), BATCH_SIZE):
     end_idx = start_idx + BATCH_SIZE
-    batch_neutral, batch_jb = neutral_texts[start_idx:end_idx], jb_texts[start_idx:end_idx]
+    batch_clean, batch_typo = clean_texts[start_idx:end_idx], typo_texts[start_idx:end_idx]
 
-    indices_neutral_batch, indices_jb_batch = [], []
+    indices_clean_batch, indices_typo_batch = [], []
     
     # Identify relevant tokens for each prompt
-    for neutral_txt, jb_txt in zip(batch_neutral, batch_jb):
-        rel_neutral, tokens_neutral, rel_jb, tokens_jb = get_relevant_token_indices_pair(neutral_txt, jb_txt, tokenizer)
-        indices_neutral_batch.append(rel_neutral)
-        indices_jb_batch.append(rel_jb)
+    for clean_txt, typo_txt in zip(batch_clean, batch_typo):
+        rel_clean, tokens_clean, rel_typo, tokens_typo = get_relevant_token_indices_pair(clean_txt, typo_txt, tokenizer)
+        indices_clean_batch.append(rel_clean)
+        indices_typo_batch.append(rel_typo)
 
-    # Capture activations for the neutral version
-    activations_neutral = capture_activations(batch_neutral, indices_neutral_batch)
-    # Capture activations for the jb version
-    activations_jb = capture_activations(batch_jb, indices_jb_batch)
+    # Capture activations for the clean version
+    activations_clean = capture_activations(batch_clean, indices_clean_batch)
+    # Capture activations for the typo version
+    activations_typo = capture_activations(batch_typo, indices_typo_batch)
 
-    if activations_neutral and activations_jb:
-        for i in range(len(batch_neutral)):
+    if activations_clean and activations_typo:
+        for i in range(len(batch_clean)):
             sample_idx = start_idx + i
             # Save the final results for this sample
             filename = os.path.join(OUTPUT_DIR, f"activations_{sample_idx:05d}.pt")
-            torch.save({"neutral": activations_neutral[i], "jb": activations_jb[i]}, filename)
+            torch.save({"clean": activations_clean[i], "typo": activations_typo[i]}, filename)
         print(f"Saved activations for samples {start_idx} to {end_idx}")
 
 print(f"Inference complete. Results saved in '{OUTPUT_DIR}'.")
