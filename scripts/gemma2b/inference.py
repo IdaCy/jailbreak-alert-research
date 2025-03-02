@@ -7,7 +7,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 # 1. Configuration and Setup
 # ------------------------------------------------------------------------
 PROMPT_FILE = globals().get("PROMPT_FILE", "data/ReNeLLM/jailbreaks/jb400.csv")
-OUTPUT_DIR = globals().get("OUTPUT_DIR", "output/jailbreak")
+OUTPUT_DIR = globals().get("OUTPUT_DIR", "output/extractions/jailbreak")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 MODEL_NAME = globals().get("MODEL_NAME", "google/gemma-2-2b")
