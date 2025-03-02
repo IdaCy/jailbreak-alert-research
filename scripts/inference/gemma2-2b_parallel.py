@@ -54,19 +54,23 @@ else:
     tokenizer.pad_token_id = tokenizer.convert_tokens_to_ids(tokenizer.pad_token)
 
 # 4) Load the model from local gemma-2-2b checkpoint
+#    Remove device_map="auto" and then move the entire model to CUDA.
 model = AutoModelForCausalLM.from_pretrained(
     MODEL_NAME,
     config=config,
     trust_remote_code=True,
     torch_dtype=torch.bfloat16 if USE_BFLOAT16 else torch.float32,
     low_cpu_mem_usage=True,
-    device_map="auto",
+    # device_map="auto",  <-- Remove this
     attn_implementation="eager",
     use_auth_token=HF_TOKEN
 )
 
 # If you added a new pad token, resize embeddings
 model.resize_token_embeddings(len(tokenizer))
+
+# Move entire model to GPU to match your input_ids.to("cuda")
+model.to("cuda")
 
 model.eval()
 print("Model loaded successfully from local gemma2-2b checkpoint.")
