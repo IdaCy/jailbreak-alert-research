@@ -56,11 +56,11 @@ def load_sentences(file_path):
 df_clean = load_sentences(PROMPT_FILE)
 all_texts = df_clean['sentence'].tolist()
 
-# If NUM_stronger is specified, truncate the list
-if NUM_stronger is not None and NUM_stronger < len(all_texts):
-    all_texts = all_texts[:NUM_stronger]
+# If NUM_SAMPLES is specified, truncate the list
+if NUM_SAMPLES is not None and NUM_SAMPLES < len(all_texts):
+    all_texts = all_texts[:NUM_SAMPLES]
 
-print(f"Loaded {len(all_texts)} stronger for inference.")
+print(f"Loaded {len(all_texts)} samples for inference.")
 
 # ------------------------------------------------------------------------
 # 3. Managing GPU Memory
