@@ -6,9 +6,9 @@ import matplotlib.pyplot as plt
 torch.serialization.add_safe_globals(['numpy._core.multiarray._reconstruct'])
 
 # Define paths for the PCA results.
-pca_dir = "analyses_results/PCA_PC1"
-results_file = os.path.join(pca_dir, "layer_pca_results.pt")
-pc1_file = os.path.join(pca_dir, "layer_pc1_vectors.pt")
+pca_dir = globals().get("PCA_DIR", "output/PCA")
+results_file = globals().get("RESULTS_FILE", "output/PCA")
+pc1_file = globals().get("PC1_FILE", "output/PCA/layer_pc1_vectors.pt")
 
 # Check that the files exist.
 if not os.path.exists(results_file):
