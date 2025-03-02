@@ -27,6 +27,9 @@ EXTRACT_HIDDEN_LAYERS = globals().get("EXTRACT_HIDDEN_LAYERS", [0, 1, 2, 3, 4, 5
 EXTRACT_ATTENTION_LAYERS = globals().get("EXTRACT_ATTENTION_LAYERS", [10, 15, 20, 25])
 FINAL_LAYER = globals().get("FINAL_LAYER", 25)
 
+# New optional variable:
+NUM_SAMPLES = globals().get("NUM_SAMPLES", None)  # If defined, only process this many samples
+
 # ------------------------------------------------------------------------
 # Load Model and Tokenizer
 # ------------------------------------------------------------------------
@@ -50,7 +53,7 @@ if getattr(tokenizer, "pad_token_id", None) is not None:
 else:
     tokenizer.pad_token_id = tokenizer.convert_tokens_to_ids(tokenizer.pad_token)
 
-# 4) Load the model from local gemma2-2b checkpoint
+# 4) Load the model from local gemma-2-2b checkpoint
 model = AutoModelForCausalLM.from_pretrained(
     MODEL_NAME,
     config=config,
@@ -81,6 +84,11 @@ jb_texts = load_sentences(JAILBREAK_FILE)
 
 if len(neutral_texts) != len(jb_texts):
     raise ValueError("Mismatch between number of neutral and jb prompts!")
+
+# If NUM_SAMPLES is set, truncate both lists
+if NUM_SAMPLES is not None:
+    neutral_texts = neutral_texts[:NUM_SAMPLES]
+    jb_texts = jb_texts[:NUM_SAMPLES]
 
 print(f"Loaded {len(neutral_texts)} samples for inference.")
 
@@ -208,7 +216,8 @@ print("Starting inference & extraction of relevant activations for neutral & jb 
 
 for start_idx in range(0, len(neutral_texts), BATCH_SIZE):
     end_idx = start_idx + BATCH_SIZE
-    batch_neutral, batch_jb = neutral_texts[start_idx:end_idx], jb_texts[start_idx:end_idx]
+    batch_neutral = neutral_texts[start_idx:end_idx]
+    batch_jb = jb_texts[start_idx:end_idx]
 
     indices_neutral_batch, indices_jb_batch = [], []
     
