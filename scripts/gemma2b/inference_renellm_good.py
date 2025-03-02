@@ -6,8 +6,8 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 # ------------------------------------------------------------------------
 # 1. Configuration and Setup
 # ------------------------------------------------------------------------
-PROMPT_FILE = globals().get("PROMPT_FILE", "data/ReNeLLM/jailbreaks/jb400.csv")
-OUTPUT_DIR = globals().get("OUTPUT_DIR", "output/extractions/jailbreak")
+PROMPT_FILE = globals().get("PROMPT_FILE", "data/renellm/good400.csv")
+OUTPUT_DIR = globals().get("OUTPUT_DIR", "output/extractions/good")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 MODEL_NAME = globals().get("MODEL_NAME", "google/gemma-2-2b")
@@ -23,8 +23,8 @@ EXTRACT_ATTENTION_LAYERS = globals().get("EXTRACT_ATTENTION_LAYERS", [0, 5, 10, 
 # How many logits to keep
 TOP_K_LOGITS = globals().get("TOP_K_LOGITS", 10)
 
-LOG_FILE = globals().get("LOG_FILE", "logs/jb_run_progress.log")
-ERROR_LOG = globals().get("ERROR_LOG", "logs/jb_run_errors.log")
+LOG_FILE = globals().get("LOG_FILE", "logs/good_run_progress.log")
+ERROR_LOG = globals().get("ERROR_LOG", "logs/good_run_errors.log")
 os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
 os.makedirs(os.path.dirname(ERROR_LOG), exist_ok=True)
 
@@ -52,11 +52,11 @@ def load_sentences(file_path):
 df_clean = load_sentences(PROMPT_FILE)
 all_texts = df_clean['sentence'].tolist()
 
-# If NUM_SAMPLES is specified, truncate the list
-if NUM_SAMPLES is not None and NUM_SAMPLES < len(all_texts):
-    all_texts = all_texts[:NUM_SAMPLES]
+# If NUM_stronger is specified, truncate the list
+if NUM_stronger is not None and NUM_stronger < len(all_texts):
+    all_texts = all_texts[:NUM_stronger]
 
-print(f"Loaded {len(all_texts)} samples for inference.")
+print(f"Loaded {len(all_texts)} stronger for inference.")
 
 # ------------------------------------------------------------------------
 # 3. Managing GPU Memory

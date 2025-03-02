@@ -3,6 +3,7 @@ From: nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
 
 %environment
     export PYTHONNOUSERSITE=1
+    export HF_TOKEN=None # I out-gitubbed it
     export LC_ALL=C.UTF-8
     export LANG=C.UTF-8
     export DEBIAN_FRONTEND=noninteractive
@@ -27,13 +28,13 @@ From: nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
     export TZ=Etc/UTC
     echo "Timezone set to $TZ"
 
-    # Update and install minimal dependencies
+    # Update & install minimal dependencies
     apt-get update && apt-get install -y --no-install-recommends \
         python3.10 python3.10-venv python3.10-dev python3-pip \
         git wget curl build-essential \
         && rm -rf /var/lib/apt/lists/*
 
-    # Ensure Python 3.10 is the default version
+    # Python 3.10 is the default version
     update-alternatives --install /usr/bin/python python /usr/bin/python3.10 1
     update-alternatives --config python
 
@@ -41,11 +42,11 @@ From: nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
     python --version
     pip install --upgrade pip setuptools wheel
 
-    # Install PyTorch with CUDA 12.1 wheels (as of PyTorch 2.0+)
+    # PyTorch with CUDA 12.1 wheels (as of PyTorch 2.0+)
     pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu121 \
         torch torchvision torchaudio
 
-    # Install Hugging Face + typical libraries for interpretability
+    # Hugging Face + typical libraries for interpretability
     pip install --no-cache-dir \
         transformers \
         huggingface_hub \
@@ -53,9 +54,11 @@ From: nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
         einops \
         pandas \
         tqdm \
+        statsmodels \
+        scikit-learn \
         datasets
 
-    # Additional mechanistic interpretability or debugging tools:
+    # Additional mechanistic interpretability / debugging tools:
     pip install circuitsvis captum shap
 
     # Clean up pip cache
@@ -70,4 +73,4 @@ From: nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
 %labels
     Author  Ida
     Version 1.0
-    Description "Minimal Singularity container for mechanistic interpretability with PyTorch + Hugging Face"
+    Description "Singularity container for mechanistic interpretability with PyTorch + Hugging Face"

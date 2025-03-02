@@ -6,8 +6,8 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 # ------------------------------------------------------------------------
 # 1. Configuration and Setup
 # ------------------------------------------------------------------------
-PROMPT_FILE = globals().get("PROMPT_FILE", "data/ReNeLLM/jailbreaks/jb400.csv")
-OUTPUT_DIR = globals().get("OUTPUT_DIR", "output/extractions/jailbreak")
+PROMPT_FILE = globals().get("PROMPT_FILE", "data/renellm/jb400.csv")
+OUTPUT_DIR = globals().get("OUTPUT_DIR", "output/extractions/jb")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 MODEL_NAME = globals().get("MODEL_NAME", "google/gemma-2-2b")
@@ -29,7 +29,7 @@ os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
 os.makedirs(os.path.dirname(ERROR_LOG), exist_ok=True)
 
 # NEW: Optionally limit how many total samples to process
-NUM_SAMPLES = globals().get("NUM_SAMPLES", None)
+NUM_SAMPLES = globals().get("NUM_SAMPLES", 2)
 if isinstance(NUM_SAMPLES, str) and NUM_SAMPLES.isdigit():
     NUM_SAMPLES = int(NUM_SAMPLES)
 
