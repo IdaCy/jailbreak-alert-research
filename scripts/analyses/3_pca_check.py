@@ -2,49 +2,48 @@ import os
 import torch
 import matplotlib.pyplot as plt
 
-# Allow the global function that PyTorch is complaining about.
+# (Optional) If you want to silence the PyTorch warning about pickle:
 torch.serialization.add_safe_globals(['numpy._core.multiarray._reconstruct'])
 
-# Define paths for the PCA results.
-pca_dir = globals().get("PCA_DIR", "output/PCA")
-results_pt = globals().get("RESULTS_PT", "output/PCA/layer_pca_results.pt")
-pc1_file = globals().get("PC1_FILE", "output/PCA/layer_pc1_vectors.pt")
+# Paths for the PCA results
+PCA_DIR      = globals().get("PCA_DIR", "outputs/PCA")
+RESULTS_PT   = globals().get("RESULTS_PT", os.path.join(PCA_DIR, "layer_pca_results.pt"))
+PC1_FILE     = globals().get("PC1_FILE", os.path.join(PCA_DIR, "layer_pc1_vectors.pt"))
 
-# Check that the files exist.
-if not os.path.exists(results_pt):
-    raise ValueError(f"PCA results file not found: {results_pt}")
-if not os.path.exists(pc1_file):
-    raise ValueError(f"PC1 vectors file not found: {pc1_file}")
+# Check that the files exist
+if not os.path.exists(RESULTS_PT):
+    raise ValueError(f"PCA results file not found: {RESULTS_PT}")
+if not os.path.exists(PC1_FILE):
+    raise ValueError(f"PC1 vectors file not found: {PC1_FILE}")
 
-# Load the PCA results.
-pca_results = torch.load(results_pt, map_location="cpu", weights_only=False)
-pc1_vectors = torch.load(pc1_file, map_location="cpu", weights_only=False)
+# Load the PCA results
+pca_results = torch.load(RESULTS_PT, map_location="cpu")
+pc1_vectors = torch.load(PC1_FILE, map_location="cpu")
 
 print("=== PCA Results Summary ===")
-print("Type of PCA results:", type(pca_results), end=" ")
-print("Type of PC1 vectors:", type(pc1_vectors))
+print("Type of pca_results:", type(pca_results))
+print("Type of pc1_vectors:", type(pc1_vectors))
 print(f"Total layers: {len(pca_results)}\n")
 
-for layer in sorted(pca_results.keys(), key=lambda x: int(x.split('_')[1])):
-    ev = pca_results[layer][:3]
-    vec = pc1_vectors[layer][:3]
-    print(f"Layer {layer}: Explained variance ratios (top 3): {ev} | First 3 elements: {vec[:5]}")
+# Sort layer keys by their numeric part
+sorted_layers = sorted(pca_results.keys(), key=lambda x: int(x.split('_')[1]))
+for layer in sorted_layers:
+    ev_ratios = pca_results[layer]
+    pc1_vec = pc1_vectors[layer]
+    print(f"Layer {layer}: Explained variance ratio (top 3): {ev_ratios[:3]}")
+    print(f"  PC1 first 3 elements: {pc1_vec[:3]}")
     print("")
 
-# Plot the explained variance ratio of PC1 across layers.
-layers = sorted(pca_results.keys(), key=lambda x: int(x.split("_")[1]))
-numeric_layers = [int(k.split("_")[1]) for k in layers]
-first_pc_ev = [pca_results[layer][0] for layer in layers]
+# Plot the explained variance ratio of PC1 across layers
+numeric_layers = [int(k.split("_")[1]) for k in sorted_layers]
+first_pc_ev = [pca_results[layer][0] for layer in sorted_layers]
 
 plt.figure(figsize=(10, 5))
 plt.plot(numeric_layers, first_pc_ev, marker='o', linestyle='-')
 plt.xlabel("Layer")
 plt.ylabel("Explained Variance Ratio (PC1)")
-plt.title("PC1 Explained Variance Ratio for Relevant Layers")
+plt.title("PC1 Explained Variance Ratio per Layer")
 plt.grid(True)
-
-# Limit y-axis if desired
-plt.ylim(0.95, 1.0)
 
 plt.tight_layout()
 plt.show()

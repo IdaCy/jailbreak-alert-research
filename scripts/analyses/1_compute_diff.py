@@ -1,68 +1,88 @@
 import os
-import torch
 import glob
+import torch
 from tqdm import tqdm
 
-# Directories: Combined activation files and output differences
-extractions_dir = globals().get("EXTRACTIONS_DIR", "output/extractions")
-diff_dir = globals().get("DIFF_DIR", "output/differences")
-os.makedirs(diff_dir, exist_ok=True)
+# Directories containing the separate .pt files from your new inference script
+NEUTRAL_DIR = globals().get("NEUTRAL_DIR", "outputs/jailbreak_neutral")
+JB_DIR      = globals().get("JB_DIR", "outputs/jailbreak_jb")
+DIFF_DIR    = globals().get("DIFF_DIR", "outputs/differences")
+os.makedirs(DIFF_DIR, exist_ok=True)
 
-# List all activation files (e.g., activations_*.pt)
-files = sorted(glob.glob(os.path.join(extractions_dir, "*.pt")))
-print(f"Found {len(files)} files in {extractions_dir}")
+# List all NEUTRAL .pt files
+neutral_files = sorted(glob.glob(os.path.join(NEUTRAL_DIR, "*.pt")))
+jb_files      = sorted(glob.glob(os.path.join(JB_DIR,      "*.pt")))
 
-for file in tqdm(files, desc="Processing extraction files"):
-    # Load the combined file of both "neutral" and "jb" keys
-    data = torch.load(file, map_location="cpu")
+if len(neutral_files) != len(jb_files):
+    raise ValueError("Mismatch: # of neutral files != # of jb files. Ensure same # of .pt files.")
+
+print(f"Found {len(neutral_files)} neutral files in {NEUTRAL_DIR}")
+print(f"Found {len(jb_files)} jb files in {JB_DIR}")
+
+for neutral_file, jb_file in tqdm(zip(neutral_files, jb_files),
+                                  desc="Computing differences",
+                                  total=len(neutral_files)):
+
+    # Load the .pt data from both sets
+    neutral_data = torch.load(neutral_file, map_location="cpu")
+    jb_data      = torch.load(jb_file,      map_location="cpu")
+
     diff_data = {}
 
-    # Process hidden_states: stored as dictionaries keyed by layer
-    if "neutral" in data and "hidden_states" in data["neutral"] and "hidden_states" in data["jb"]:
+    # ----------------------------------------------------------------
+    # 1) Hidden states difference
+    #    In your new inference script, "hidden_states" is a dict:
+    #       { "layer_5": [batch, seq_len, hidden_dim], ... }
+    # ----------------------------------------------------------------
+    if "hidden_states" in neutral_data and "hidden_states" in jb_data:
         diff_data["hidden_states"] = {}
-        for layer_key in data["neutral"]["hidden_states"]:
-            neutral_tensor = data["neutral"]["hidden_states"][layer_key]
-            jb_tensor = data["jb"]["hidden_states"].get(layer_key)
-            if jb_tensor is None:
-                continue
-            # Crop along the token dimension.
-            seq_len = min(neutral_tensor.size(0), jb_tensor.size(0))
-            diff_data["hidden_states"][layer_key] = neutral_tensor[:seq_len] - jb_tensor[:seq_len]
+        for layer_key, neutral_tensor in neutral_data["hidden_states"].items():
+            if layer_key in jb_data["hidden_states"]:
+                jb_tensor = jb_data["hidden_states"][layer_key]
+                # Both are shape [batch, seq_len, hidden_dim]
+                # Crop the seq dimension if needed
+                min_batch  = min(neutral_tensor.size(0), jb_tensor.size(0))
+                min_seq    = min(neutral_tensor.size(1), jb_tensor.size(1))
+                diff_data["hidden_states"][layer_key] = \
+                    neutral_tensor[:min_batch, :min_seq] - jb_tensor[:min_batch, :min_seq]
 
-    # Process attention_scores: cropping along both dimensions
-    if "neutral" in data and "attention_scores" in data["neutral"] and "attention_scores" in data["jb"]:
-        diff_data["attention_scores"] = {}
-        for layer_key in data["neutral"]["attention_scores"]:
-            neutral_tensor = data["neutral"]["attention_scores"][layer_key]
-            jb_tensor = data["jb"]["attention_scores"].get(layer_key)
-            if jb_tensor is None:
-                continue
-            # Crop along both dimensions (e.g., token dimension and attention dimension)
-            min_dim0 = min(neutral_tensor.size(0), jb_tensor.size(0))
-            min_dim1 = min(neutral_tensor.size(1), jb_tensor.size(1))
-            diff_data["attention_scores"][layer_key] = neutral_tensor[:min_dim0, :min_dim1] - jb_tensor[:min_dim0, :min_dim1]
+    # ----------------------------------------------------------------
+    # 2) Attentions difference (optional)
+    #    In your new script, this is "attentions" not "attention_scores".
+    #    The shape: [batch, num_heads, seq_len, seq_len]
+    # ----------------------------------------------------------------
+    if "attentions" in neutral_data and "attentions" in jb_data:
+        diff_data["attentions"] = {}
+        for layer_key, neutral_tensor in neutral_data["attentions"].items():
+            if layer_key in jb_data["attentions"]:
+                jb_tensor = jb_data["attentions"][layer_key]
+                min_batch = min(neutral_tensor.size(0), jb_tensor.size(0))
+                min_heads = min(neutral_tensor.size(1), jb_tensor.size(1))
+                min_seq   = min(neutral_tensor.size(2), jb_tensor.size(2))
+                diff_data["attentions"][layer_key] = (
+                    neutral_tensor[:min_batch, :min_heads, :min_seq, :min_seq]
+                    - jb_tensor[:min_batch, :min_heads, :min_seq, :min_seq]
+                )
 
-    # Process top_k_logits: stored as dictionaries keyed by token index
-    if "neutral" in data and "top_k_logits" in data["neutral"] and "top_k_logits" in data["jb"]:
-        diff_data["top_k_logits"] = {}
-        for token_key in data["neutral"]["top_k_logits"]:
-            neutral_tensor = data["neutral"]["top_k_logits"][token_key]
-            jb_tensor = data["jb"]["top_k_logits"].get(token_key)
-            if jb_tensor is None:
-                continue
-            diff_data["top_k_logits"][token_key] = neutral_tensor - jb_tensor
+    # ----------------------------------------------------------------
+    # 3) Top-K logits difference (optional)
+    #    The new script calls it "topk_logits" (not "top_k_logits").
+    #    Shape: [batch, seq_len, top_k]
+    # ----------------------------------------------------------------
+    if "topk_logits" in neutral_data and "topk_logits" in jb_data:
+        # We'll store one key: "topk_logits"
+        neutral_topk = neutral_data["topk_logits"]
+        jb_topk      = jb_data["topk_logits"]
+        min_batch    = min(neutral_topk.size(0), jb_topk.size(0))
+        min_seq      = min(neutral_topk.size(1), jb_topk.size(1))
+        diff_data["topk_logits"] = (
+            neutral_topk[:min_batch, :min_seq] - jb_topk[:min_batch, :min_seq]
+        )
 
-    # Process top_k_probs similarly
-    if "neutral" in data and "top_k_probs" in data["neutral"] and "top_k_probs" in data["jb"]:
-        diff_data["top_k_probs"] = {}
-        for token_key in data["neutral"]["top_k_probs"]:
-            neutral_tensor = data["neutral"]["top_k_probs"][token_key]
-            jb_tensor = data["jb"]["top_k_probs"].get(token_key)
-            if jb_tensor is None:
-                continue
-            diff_data["top_k_probs"][token_key] = neutral_tensor - jb_tensor
-
-    # Save the computed differences for this file
-    base_filename = os.path.basename(file)
-    diff_output_path = os.path.join(diff_dir, base_filename)
-    torch.save(diff_data, diff_output_path)
+    # ----------------------------------------------------------------
+    # 4) Save the computed difference
+    #    We'll base the filename on the neutral file’s name
+    # ----------------------------------------------------------------
+    base_filename = os.path.basename(neutral_file)
+    diff_path = os.path.join(DIFF_DIR, base_filename)
+    torch.save(diff_data, diff_path)
