@@ -8,8 +8,8 @@ import matplotlib.pyplot as plt
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Directories for input differences and output analyses
-diff_dir = "analyses/differences"
-output_dir = "analyses/PCA_results"
+diff_dir = globals().get("DIFF_DIR", "data/extractions")
+output_dir = globals().get("OUTPUT_DIR", "data/extractions")
 
 # List all difference files (they are in .pt format)
 diff_files = sorted(glob.glob(os.path.join(diff_dir, "*.pt")))
