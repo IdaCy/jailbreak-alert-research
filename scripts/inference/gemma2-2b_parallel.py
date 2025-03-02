@@ -14,7 +14,7 @@ OUTPUT_DIR = globals().get("OUTPUT_DIR", "/workspace/gemma/extractions")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 MODEL_NAME = globals().get("MODEL_NAME", "google/gemma-2-2b")
-HF_TOKEN = os.environ.get("HF_TOKEN", None)
+HF_TOKEN = globals().get("OUTPUTHF_TOKEN_DIR", None)
 if HF_TOKEN is None:
     raise ValueError("No Hugging Face token found in environment variable HF_TOKEN.")
 
