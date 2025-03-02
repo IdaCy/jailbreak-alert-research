@@ -4,7 +4,7 @@ import glob
 from tqdm import tqdm
 
 # Directories: Combined activation files and output differences
-extractions_dir = globals().get("EXTRACTIONS_DIR", "output/extractions")
+extractions_dir = globals().get("EXTRACTIONS_DIR", "data/extractions")
 diff_dir = globals().get("DIFF_DIR", "output/differences")
 os.makedirs(diff_dir, exist_ok=True)
 
