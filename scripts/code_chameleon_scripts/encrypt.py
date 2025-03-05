@@ -52,8 +52,8 @@ def encrypt_none(sentence) :
 
 def encrypt_odd_even(sentence):
     words = sentence.split()
-    odd_words = words[::2]  # 奇数位置的单词
-    even_words = words[1::2]  # 偶数位置的单词
+    odd_words = words[::2]  #words in odd positions
+    even_words = words[1::2]  #words in even positions
     encrypted_words = odd_words + even_words
     encrypted_sentence = ' '.join(encrypted_words)
     return encrypted_sentence
