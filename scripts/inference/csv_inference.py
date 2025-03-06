@@ -10,21 +10,21 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 PROMPT_FILE = (
     os.environ.get("PROMPT_FILE")
     or globals().get("PROMPT_FILE")
-    or "data/renellm/jb400.csv"
+    or "data/renellm/stronger400.csv"
 )
 
 OUTPUT_DIR = (
     os.environ.get("OUTPUT_DIR")
     or globals().get("OUTPUT_DIR")
-    or "output/extractions/mistral7b/jb_small_2"
+    or "output/extractions/gemma2b/stronger"
 )
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 MODEL_NAME = (
     os.environ.get("MODEL_NAME")
     or globals().get("MODEL_NAME")
-    #or "google/gemma-2-2b"
-    or "mistralai/Mistral-7B-v0.1"
+    or "google/gemma-2-2b"
+    #or "mistralai/Mistral-7B-v0.1"
 )
 
 BATCH_SIZE = int(
@@ -47,11 +47,13 @@ MAX_SEQ_LENGTH = int(
 
 EXTRACT_HIDDEN_LAYERS = (
     os.environ.get("EXTRACT_HIDDEN_LAYERS")
-    or globals().get("EXTRACT_HIDDEN_LAYERS", [0, 5, 10, 15, 20, 25, 30, 31])
+    #or globals().get("EXTRACT_HIDDEN_LAYERS", [0, 5, 10, 15, 20, 25, 30, 31])
+    or globals().get("EXTRACT_HIDDEN_LAYERS", [0, 5, 10, 15, 20, 25])
 )
 EXTRACT_ATTENTION_LAYERS = (
     os.environ.get("EXTRACT_ATTENTION_LAYERS")
-    or globals().get("EXTRACT_ATTENTION_LAYERS", [0, 10, 20, 30])
+    or globals().get("EXTRACT_ATTENTION_LAYERS", [0, 5, 10, 15, 20, 25])
+    #or globals().get("EXTRACT_ATTENTION_LAYERS", [0, 10, 20, 30])
 )
 
 TOP_K_LOGITS = int(
