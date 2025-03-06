@@ -1,18 +1,9 @@
-from transformers import AutoTokenizer, AutoModelForCausalLM
-from openai import OpenAI
-import torch
-import argparse
-from tqdm import tqdm
 import pandas as pd
+import os
 import argparse
-import time
-
-
 from utils import save_generation, complete_format, save_prompts
 from template import get_prompts
 
-# your openai key
-# OPENAI_API_KEY = "your openai key here"
 
 WAIT_TIME = 10
 
@@ -54,6 +45,39 @@ def set_config(model_generation_config, args):
 
     return generation_config
 
+#This converts our promts to their required format in a new csv file
+def save_prompts_as_csv(args):
+    """Encrypt, format, and save prompts in CSV format for inference"""
+    # Get and format prompts
+    prompts, original_queries = get_prompts(args)
+    if prompts is None:
+        raise ValueError("get_prompts returned None")
+    if original_queries is None:
+        raise ValueError("get_prompts returned None for original_queries")
+    
+    print(f"Prompts: {prompts[:5]}")  # Print first 5 prompts for debugging
+    print(f"Original Queries: {original_queries[:5]}")  # Print first 5 original queries for debugging
+    
+    complete_prompts = complete_format(args, prompts)
+    if complete_prompts is None:
+        raise ValueError("complete_format returned None")
+    
+    print(f"Complete Prompts: {complete_prompts[:5]}")  # Print first 5 complete prompts for debugging
+    
+    # Convert prompts to format expected by csv_inference
+    formatted_prompts = [{'sentence': prompt} for prompt in complete_prompts]
+    df = pd.DataFrame(formatted_prompts)
+    
+    #this sets the save path
+    csv_path = "../data/code_chameleon/formatted_prompts.csv"
+    
+    # Ensure directory exists
+    os.makedirs("data/code_chameleon", exist_ok=True)
+    
+    # Save to CSV
+    df.to_csv(csv_path, index=False)
+    print(f"Saved formatted prompts to: {csv_path}")
+    return csv_path
 
 def query_function(temperature, top_p, api_key, chat_prompts, args):
     client = OpenAI(api_key=api_key)
@@ -81,8 +105,10 @@ def query_function(temperature, top_p, api_key, chat_prompts, args):
 def open_source_attack(args):
     prompts, original_queries = get_prompts(args)
     complete_prompts = complete_format(args, prompts)
-    if args.save_prompts==True:
-        save_prompts(complete_prompts, args)
+    
+    if args.save_prompts:
+        csv_path = save_prompts_as_csv(complete_prompts)
+        print(f"Saved CSV format prompts to: {csv_path}")
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=True)
     tokenizer.pad_token = tokenizer.eos_token
@@ -110,7 +136,10 @@ def open_source_attack(args):
 def gpt_attack(args):
     prompts, original_queries = get_prompts(args)
     complete_prompts = complete_format(args, prompts)
-
+    
+    if args.save_prompts:
+        csv_path = save_prompts_as_csv(complete_prompts)
+    
     results, index = query_function(args.temperature, args.top_p, OPENAI_API_KEY, complete_prompts, args)
     save_generation(args, results, index)
 
