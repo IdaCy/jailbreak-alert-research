@@ -11,7 +11,13 @@ from tqdm import tqdm
 READ_OUTPUT_DIR = (
     os.environ.get("READ_OUTPUT_DIR")
     or globals().get("READ_OUTPUT_DIR")
-    or "output/extractions/mistral7b/jb"
+    or "output/extractions/gemma2b/jb"
+)
+
+DIFF_DIR = (
+    os.environ.get("DIFF_DIR")
+    or globals().get("DIFF_DIR")
+    or "outputs/differences"
 )
 
 READ_LOG_FILE = (
