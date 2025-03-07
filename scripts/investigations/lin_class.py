@@ -146,54 +146,67 @@ def load_and_combine(good_jb_pairs):
 ###############################################################################
 def build_dataset(activation_data, extract_layers):
     """
-    This is the same as the old approach, except now each 'entry' has
-    entry["clean"]["hidden_states"], entry["typo"]["hidden_states"].
-    We average over tokens, label clean=0, typo=1. 
+    After loading clean_act / typo_act, we make sure to flatten any batch dimension
+    so that each sample is always shape [hidden_dim].
     """
     layer_datasets = {l: [] for l in extract_layers}
 
     for entry in activation_data:
         clean_data = entry["clean"]
-        typo_data  = entry["typo"]
+        jb_data    = entry["typo"]
 
         for l in extract_layers:
             layer_key = f"layer_{l}"
 
             clean_act = clean_data["hidden_states"].get(layer_key, None)
-            typo_act  = typo_data["hidden_states"].get(layer_key, None)
-            if clean_act is None or typo_act is None:
+            jb_act    = jb_data["hidden_states"].get(layer_key, None)
+            if clean_act is None or jb_act is None:
                 continue
 
             clean_np = clean_act.to(torch.float32).cpu().numpy()
-            typo_np  = typo_act.to(torch.float32).cpu().numpy()
+            jb_np    = jb_act.to(torch.float32).cpu().numpy()
 
-            if clean_np.shape[0] == 0 or typo_np.shape[0] == 0:
-                logging.warning(f"Skipping layer {layer_key} -> zero tokens in batch.")
-                continue
+            # handle each: if it’s 2D => (seq_len, hidden_dim), treat as batch=1
+            # if it’s 3D => (batch_size, seq_len, hidden_dim)
+            def process(arr, label):
+                if arr.ndim == 2:
+                    # shape (seq_len, hidden_dim) => single sample
+                    arr = arr[np.newaxis, ...]  # => shape (1, seq_len, hidden_dim)
+                elif arr.ndim != 3:
+                    # skip any weird shape
+                    logging.warning(f"Skipping: unexpected shape {arr.shape}")
+                    return
 
-            clean_vec = clean_np.mean(axis=0)
-            typo_vec  = typo_np.mean(axis=0)
+                # now arr is (batch_size, seq_len, hidden_dim)
+                batch_size = arr.shape[0]
+                seq_len    = arr.shape[1]
+                if seq_len == 0:
+                    logging.warning(f"Skipping: zero tokens => {arr.shape}")
+                    return
 
-            if np.isnan(clean_vec).any() or np.isnan(typo_vec).any():
-                logging.warning(f"Skipping layer {layer_key} -> got NaN in averages.")
-                continue
+                for b_idx in range(batch_size):
+                    vec = arr[b_idx].mean(axis=0)  # shape [hidden_dim]
+                    if np.isnan(vec).any():
+                        logging.warning("Skipping sample => got NaN in mean.")
+                        continue
+                    layer_datasets[l].append((vec, label))
 
-            # label=0 => clean, label=1 => jb
-            layer_datasets[l].append((clean_vec, 0))
-            layer_datasets[l].append((typo_vec, 1))
+            # process 'clean' as label=0, 'typo'/jb as label=1
+            process(clean_np, 0)
+            process(jb_np, 1)
 
     results = {}
     for l in extract_layers:
         data_list = layer_datasets[l]
         if not data_list:
-            logging.warning(f"No valid data found for layer {l}")
+            logging.warning(f"No valid data for layer {l}")
             continue
 
         X = np.array([item[0] for item in data_list], dtype=np.float32)
         y = np.array([item[1] for item in data_list], dtype=np.int64)
         results[l] = (X, y)
-    return results
 
+    return results
 
 ###############################################################################
 # 5. Train/Evaluate 
