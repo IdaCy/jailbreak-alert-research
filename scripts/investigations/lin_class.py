@@ -24,12 +24,12 @@ JB_DIR = (
     or "output/extractions/gemma2b/jb"
 )
 
-# Where we might store logs or final results
+"""# Where we might store logs or final results
 OUTPUT_DIR = (
     os.environ.get("OUTPUT_DIR")
     or globals().get("OUTPUT_DIR")
     or "output/extractions/gemma2b"
-)
+)"""
 
 # Layers to extract
 EXTRACT_HIDDEN_LAYERS = (
@@ -65,7 +65,7 @@ logging.getLogger().addHandler(console_handler)
 logging.info("Starting linear classification script to pair up 'good' vs 'jb' runs.")
 logging.info(f"GOOD_DIR: {GOOD_DIR}")
 logging.info(f"JB_DIR: {JB_DIR}")
-logging.info(f"OUTPUT_DIR: {OUTPUT_DIR}")
+#logging.info(f"OUTPUT_DIR: {OUTPUT_DIR}")
 logging.info(f"EXTRACT_HIDDEN_LAYERS: {EXTRACT_HIDDEN_LAYERS}")
 logging.info(f"TRAIN_TEST_SPLIT_RATIO: {TRAIN_TEST_SPLIT_RATIO}")
 logging.info(f"Logging to: {LOG_FILE}")
