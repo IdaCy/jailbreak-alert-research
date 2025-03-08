@@ -206,7 +206,7 @@ def capture_activations(text_batch, idx):
             generated_output = model.generate(
                 input_ids,
                 attention_mask=attention_mask,
-                max_new_tokens=50,
+                max_new_tokens=1024,
                 pad_token_id=tokenizer.pad_token_id,
                 eos_token_id=tokenizer.eos_token_id
             )
