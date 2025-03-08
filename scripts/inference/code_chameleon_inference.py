@@ -40,6 +40,11 @@ USE_BFLOAT16 = (
 # USE_BFLOAT16 = (os.environ.get("USE_BFLOAT16") or globals().get("USE_BFLOAT16", True))
 # USE_BFLOAT16 = (True if str(USE_BFLOAT16).lower() == "true" else False)
 
+MAX_NEW_TOKENS = int(
+    os.environ.get("MAX_NEW_TOKENS")
+    or globals().get("MAX_NEW_TOKENS", 2048)
+)
+
 MAX_SEQ_LENGTH = int(
     os.environ.get("MAX_SEQ_LENGTH")
     or globals().get("MAX_SEQ_LENGTH", 2048)
@@ -206,7 +211,7 @@ def capture_activations(text_batch, idx):
             generated_output = model.generate(
                 input_ids,
                 attention_mask=attention_mask,
-                max_new_tokens=1024,
+                max_new_tokens= MAX_NEW_TOKENS,
                 pad_token_id=tokenizer.pad_token_id,
                 eos_token_id=tokenizer.eos_token_id
             )
