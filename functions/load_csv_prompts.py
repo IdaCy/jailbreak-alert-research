@@ -1,33 +1,24 @@
-import os
+# functions/load_csv_prompts.py
 import logging
 import pandas as pd
-import logging
 
-def load_csv_prompts(file_path, logger=None, num_samples=None):
+def load_prompts(file_path, num_samples=None, logger=None):
     """
-    Reads prompts from a file line by line. Ignores commas, 
-    since each prompt is newline-separated. Returns a list of 
-    prompt strings. If num_samples is provided, truncates to that many.
+    Reads a file line-by-line into a list of strings. 
+    Optionally truncates to `num_samples`.
     """
     if logger is None:
-        logger = logging.getLogger("load_csv_prompts")
+        import logging
+        logger = logging.getLogger(__name__)
         logger.setLevel(logging.INFO)
 
-    logger.debug(f"Loading prompts from {file_path}")
-    if not os.path.isfile(file_path):
-        raise FileNotFoundError(f"File not found: {file_path}")
-
-    # Read line-by-line, ignoring commas
+    logger.info(f"Loading lines from {file_path}")
     with open(file_path, "r", encoding="utf-8") as f:
         lines = [line.strip() for line in f if line.strip()]
 
-    # Truncate if num_samples is specified
-    if num_samples is not None and isinstance(num_samples, int) and num_samples > 0:
+    if num_samples is not None and 0 < num_samples < len(lines):
+        logger.info(f"Truncating dataset to first {num_samples} lines.")
         lines = lines[:num_samples]
-        logger.debug(f"Truncated to first {num_samples} prompts.")
 
-    logger.debug(f"Total lines loaded: {len(lines)}")
-    # If need DataFrame, can wrap:
-    # df = pd.DataFrame(lines, columns=["sentence"])
-    # return df["sentence"].tolist()
+    logger.info(f"Loaded {len(lines)} prompts from {file_path}.")
     return lines

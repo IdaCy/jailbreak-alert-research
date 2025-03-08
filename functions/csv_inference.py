@@ -1,59 +1,44 @@
-# my_inference.py
-
+# functions/csv_inference.py
 import os
 import torch
 import logging
-import pandas as pd
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
-def load_model_and_tokenizer(
-    model_name="google/gemma-2-2b",
-    use_bfloat16=True,
+def load_model(
+    model_name,
     hf_token=None,
-    max_seq_length=2048,
-    log_file="logs/model_load.log",
+    use_bfloat16=True,
+    max_memory=None,
+    logger=None
 ):
     """
-    Loads the model & tokenizer exactly once. 
+    Loads the tokenizer and model from a specified Hugging Face model repo.
     Returns (model, tokenizer).
     """
-    # Setup logging, or rely on your notebook’s logging
-    logger = logging.getLogger("MyInferenceLoader")
-    logger.setLevel(logging.INFO)
+    if logger is None:
+        logger = logging.getLogger(__name__)
+        logger.setLevel(logging.INFO)
 
-    # Possibly set up file handlers if you like:
-    os.makedirs(os.path.dirname(log_file), exist_ok=True)
-    fh = logging.FileHandler(log_file, mode="a", encoding="utf-8")
-    fh.setLevel(logging.INFO)
-    logger.addHandler(fh)
-
-    logger.info("=== load_model_and_tokenizer called ===")
-    logger.info(f"model_name={model_name}, use_bfloat16={use_bfloat16}")
-
-    logger.info("Loading tokenizer...")
+    logger.info(f"Loading tokenizer from {model_name}")
     tokenizer = AutoTokenizer.from_pretrained(
         model_name,
         use_auth_token=hf_token
     )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-
-    logger.info("Loading model...")
-    torch.cuda.empty_cache()
-    if not torch.cuda.is_available():
-        raise RuntimeError("No GPU available.")
-    device_map = "auto"
-
+        logger.debug("No pad token found; using eos_token as pad token.")
+        
+    logger.info(f"Loading model from {model_name} (bfloat16={use_bfloat16}, device_map=auto)")
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
         torch_dtype=torch.bfloat16 if use_bfloat16 else torch.float32,
         low_cpu_mem_usage=True,
-        device_map=device_map,
+        device_map="auto",
+        max_memory=max_memory,
         use_auth_token=hf_token
     )
     model.eval()
-
-    logger.info("Model + tokenizer loaded successfully.")
+    logger.info("Model loaded successfully.")
     return model, tokenizer
 
 
@@ -61,41 +46,42 @@ def run_inference(
     model,
     tokenizer,
     prompts,
-    batch_size=2,
+    output_dir,
+    batch_size=4,
     max_seq_length=2048,
-    output_dir="output/extractions/default_run",
-    layers_to_extract=(0,5,10,15,20,25),
-    attn_layers_to_extract=(0,5,10,15,20,25),
+    extract_hidden_layers=None,
+    extract_attention_layers=None,
     top_k_logits=10,
-    log_file="logs/inference_run.log",
-    skip_save=False,
+    logger=None
 ):
     """
-    Reuses the *already-loaded* model & tokenizer to run inference on a 
-    list of string 'prompts'. 
-    Saves the extracted hidden states + final predictions in `output_dir` 
-    unless skip_save=True.
+    Runs inference in batches on a list of prompts, captures certain hidden states,
+    attention layers, top-k logits, then saves to .pt files in `output_dir`.
     """
+    if logger is None:
+        logger = logging.getLogger(__name__)
+        logger.setLevel(logging.INFO)
 
-    # Possibly set up logging
-    logger = logging.getLogger("MyInferenceRunner")
-    logger.setLevel(logging.INFO)
-    os.makedirs(os.path.dirname(log_file), exist_ok=True)
-    fh = logging.FileHandler(log_file, mode="a", encoding="utf-8")
-    fh.setLevel(logging.INFO)
-    logger.addHandler(fh)
-
-    logger.info("=== Starting run_inference ===")
-    logger.info(f"Number of prompts = {len(prompts)}")
-    logger.info(f"output_dir = {output_dir}, skip_save={skip_save}")
+    if extract_hidden_layers is None:
+        extract_hidden_layers = [0, 5, 10, 15, 20, 25]
+    if extract_attention_layers is None:
+        extract_attention_layers = [0, 5, 10, 15, 20, 25]
 
     os.makedirs(output_dir, exist_ok=True)
+    logger.info("=== Starting inference process ===")
+    logger.info(f"Saving results to {output_dir}")
 
-    # Batching
     total_prompts = len(prompts)
+    logger.info(f"Total prompts: {total_prompts}")
 
-    # Helper function
+    # Make sure we're on GPU
+    if not torch.cuda.is_available():
+        raise RuntimeError("No GPU available for inference.")
+    torch.cuda.empty_cache()
+
     def capture_activations(text_batch, idx):
+        """Runs model forward pass on a batch, returns hidden states & attentions & logits."""
+        logger.debug(f"Encoding batch {idx} (size={len(text_batch)}) with max_length={max_seq_length}")
         try:
             encodings = tokenizer(
                 text_batch,
@@ -114,33 +100,36 @@ def run_inference(
                     output_hidden_states=True,
                     output_attentions=True
                 )
+                # Optional: generate some short completion
                 generated_output = model.generate(
-                    input_ids,
+                    input_ids=input_ids,
                     attention_mask=attention_mask,
                     max_new_tokens=50,
                     pad_token_id=tokenizer.pad_token_id,
                     eos_token_id=tokenizer.eos_token_id
                 )
 
-            # Extract the layers
+            # 1) Hidden states
             selected_hidden_states = {}
-            for layer_idx in layers_to_extract:
+            for layer_idx in extract_hidden_layers:
                 if layer_idx < len(outputs.hidden_states):
-                    layer_tensor = outputs.hidden_states[layer_idx].cpu().to(torch.bfloat16)
+                    layer_tensor = outputs.hidden_states[layer_idx].cpu()
                     selected_hidden_states[f"layer_{layer_idx}"] = layer_tensor
 
+            # 2) Attention
             selected_attentions = {}
-            for layer_idx in attn_layers_to_extract:
+            for layer_idx in extract_attention_layers:
                 if layer_idx < len(outputs.attentions):
-                    attn_tensor = outputs.attentions[layer_idx].cpu().to(torch.bfloat16)
+                    attn_tensor = outputs.attentions[layer_idx].cpu()
                     selected_attentions[f"layer_{layer_idx}"] = attn_tensor
 
-            # top-k logits
+            # 3) Top-k logits
             logits = outputs.logits
             topk_vals, topk_indices = torch.topk(logits, k=top_k_logits, dim=-1)
-            topk_vals = topk_vals.cpu().to(torch.bfloat16)
+            topk_vals = topk_vals.cpu()
             topk_indices = topk_indices.cpu()
 
+            # 4) Decode generated text
             final_predictions = [
                 tokenizer.decode(pred, skip_special_tokens=True)
                 for pred in generated_output.cpu()
@@ -149,24 +138,31 @@ def run_inference(
             return {
                 "hidden_states": selected_hidden_states,
                 "attentions": selected_attentions,
-                "topk_logits": topk_vals,
+                "topk_vals": topk_vals,
                 "topk_indices": topk_indices,
-                "input_ids": input_ids.cpu(),
                 "final_predictions": final_predictions
             }
+
+        except torch.cuda.OutOfMemoryError:
+            logger.error(f"CUDA OOM Error at batch {idx}. Clearing cache.")
+            torch.cuda.empty_cache()
+            return None
         except Exception as e:
-            logger.exception(f"Error at batch {idx}: {e}")
+            logger.exception(f"Unhandled error at batch {idx}: {str(e)}")
             return None
 
-    # Actually run
+    # Now iterate over all prompts in batches
     for start_idx in range(0, total_prompts, batch_size):
         end_idx = start_idx + batch_size
         batch_texts = prompts[start_idx:end_idx]
-        result = capture_activations(batch_texts, start_idx)
-        if result is not None and not skip_save:
-            # Save as .pt
-            filename = os.path.join(output_dir, f"activations_{start_idx:05d}_{end_idx:05d}.pt")
-            torch.save(result, filename)
-            logger.info(f"Saved {filename}")
 
-    logger.info("=== run_inference complete ===")
+        if start_idx % 1000 == 0:
+            logger.info(f"Processing batch {start_idx} / {total_prompts}...")
+
+        activations = capture_activations(batch_texts, start_idx)
+        if activations is not None:
+            filename = os.path.join(output_dir, f"activations_{start_idx:05d}_{end_idx:05d}.pt")
+            torch.save(activations, filename)
+            logger.debug(f"Saved activations to {filename}")
+
+    logger.info(f"Inference complete. Activations are stored in '{output_dir}'.")
