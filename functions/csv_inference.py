@@ -4,31 +4,45 @@ import torch
 import logging
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
-def load_model(
-    model_name,
-    hf_token=None,
+logger = logging.getLogger(__name__)
+
+
+def load_model_and_tokenizer(
+    model_name="google/gemma-2-9b",
     use_bfloat16=True,
-    max_memory=None,
-    logger=None
+    hf_token=None,
+    max_seq_length=2048
 ):
     """
-    Loads the tokenizer and model from a specified Hugging Face model repo.
-    Returns (model, tokenizer).
-    """
-    if logger is None:
-        logger = logging.getLogger(__name__)
-        logger.setLevel(logging.INFO)
+    Loads the tokenizer and model into memory (once). Returns both objects.
 
-    logger.info(f"Loading tokenizer from {model_name}")
+    :param model_name: Name of the HF model repo.
+    :param use_bfloat16: Whether to load model weights in bfloat16.
+    :param hf_token: Optional HF auth token (string).
+    :param max_seq_length: Just to store if needed. (Not always required here.)
+    :return: (tokenizer, model) both on GPU, in eval mode.
+    """
+    # Clear GPU cache
+    logger.info("Clearing CUDA cache")
+    torch.cuda.empty_cache()
+
+    if not torch.cuda.is_available():
+        raise RuntimeError("No GPU is available! Check your runtime or environment.")
+
+    logger.info(f"Loading tokenizer from: {model_name}")
     tokenizer = AutoTokenizer.from_pretrained(
         model_name,
         use_auth_token=hf_token
     )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-        logger.debug("No pad token found; using eos_token as pad token.")
-        
-    logger.info(f"Loading model from {model_name} (bfloat16={use_bfloat16}, device_map=auto)")
+        logger.debug("No pad_token found, using eos_token as pad_token.")
+
+    # Figure out GPU total memory to limit usage, if desired
+    gpu_mem = torch.cuda.get_device_properties(0).total_memory // (1024 ** 3)
+    max_memory = {0: f"{int(gpu_mem * 0.9)}GB"}
+
+    logger.info(f"Loading model {model_name} with device_map='auto', bfloat16={use_bfloat16}")
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
         torch_dtype=torch.bfloat16 if use_bfloat16 else torch.float32,
@@ -38,50 +52,58 @@ def load_model(
         use_auth_token=hf_token
     )
     model.eval()
-    logger.info("Model loaded successfully.")
-    return model, tokenizer
+    logger.info("Model loaded successfully. Returning tokenizer and model.")
+
+    return tokenizer, model
 
 
 def run_inference(
     model,
     tokenizer,
     prompts,
-    output_dir,
-    batch_size=4,
+    output_dir="output/",
+    batch_size=2,
     max_seq_length=2048,
+    max_new_tokens=50,
     extract_hidden_layers=None,
     extract_attention_layers=None,
     top_k_logits=10,
-    logger=None
+    log_file="logs/inference.log",
+    error_log="logs/errors.log"
 ):
     """
-    Runs inference in batches on a list of prompts, captures certain hidden states,
-    attention layers, top-k logits, then saves to .pt files in `output_dir`.
+    Runs inference on a list of prompts and saves intermediate activations to .pt files.
+    
+    :param model: The loaded HuggingFace model (on GPU).
+    :param tokenizer: The corresponding tokenizer.
+    :param prompts: A list of strings (the prompts).
+    :param output_dir: Directory where .pt files of activations should be saved.
+    :param batch_size: How many prompts to process per forward pass.
+    :param max_seq_length: Tokenization max length.
+    :param max_new_tokens: How many new tokens to generate for each prompt.
+    :param extract_hidden_layers: List of layer indices to store hidden_states from.
+    :param extract_attention_layers: List of layer indices to store attentions from.
+    :param top_k_logits: Store top-K logits from the forward pass (optional).
+    :param log_file: Path to the main log file.
+    :param error_log: Path to the error log file.
+    :return: None (saves .pt files in the output directory).
     """
-    if logger is None:
-        logger = logging.getLogger(__name__)
-        logger.setLevel(logging.INFO)
-
     if extract_hidden_layers is None:
-        extract_hidden_layers = [0, 5, 10, 15, 20, 25]
+        extract_hidden_layers = [0, 5, 10, 15]
     if extract_attention_layers is None:
-        extract_attention_layers = [0, 5, 10, 15, 20, 25]
+        extract_attention_layers = [0, 5, 10, 15]
 
     os.makedirs(output_dir, exist_ok=True)
-    logger.info("=== Starting inference process ===")
-    logger.info(f"Saving results to {output_dir}")
+    os.makedirs(os.path.dirname(log_file), exist_ok=True)
+    os.makedirs(os.path.dirname(error_log), exist_ok=True)
 
-    total_prompts = len(prompts)
-    logger.info(f"Total prompts: {total_prompts}")
-
-    # Make sure we're on GPU
-    if not torch.cuda.is_available():
-        raise RuntimeError("No GPU available for inference.")
-    torch.cuda.empty_cache()
-
-    def capture_activations(text_batch, idx):
-        """Runs model forward pass on a batch, returns hidden states & attentions & logits."""
-        logger.debug(f"Encoding batch {idx} (size={len(text_batch)}) with max_length={max_seq_length}")
+    logger.info("=== Starting run_inference ===")
+    logger.info(f"Output dir: {output_dir}")
+    logger.info(f"Number of prompts: {len(prompts)}")
+    logger.info(f"Batch size: {batch_size}, max_new_tokens: {max_new_tokens}")
+    
+    def capture_activations(text_batch, batch_idx):
+        """Inner function to process a batch of texts and gather partial outputs."""
         try:
             encodings = tokenizer(
                 text_batch,
@@ -100,39 +122,39 @@ def run_inference(
                     output_hidden_states=True,
                     output_attentions=True
                 )
-                # Optional: generate some short completion
-                generated_output = model.generate(
-                    input_ids=input_ids,
+
+                # Generate text continuation
+                generated = model.generate(
+                    input_ids,
                     attention_mask=attention_mask,
-                    max_new_tokens=50,
+                    max_new_tokens=max_new_tokens,
                     pad_token_id=tokenizer.pad_token_id,
                     eos_token_id=tokenizer.eos_token_id
                 )
 
-            # 1) Hidden states
+            # Prepare partial outputs
             selected_hidden_states = {}
             for layer_idx in extract_hidden_layers:
                 if layer_idx < len(outputs.hidden_states):
                     layer_tensor = outputs.hidden_states[layer_idx].cpu()
                     selected_hidden_states[f"layer_{layer_idx}"] = layer_tensor
 
-            # 2) Attention
             selected_attentions = {}
             for layer_idx in extract_attention_layers:
                 if layer_idx < len(outputs.attentions):
                     attn_tensor = outputs.attentions[layer_idx].cpu()
                     selected_attentions[f"layer_{layer_idx}"] = attn_tensor
 
-            # 3) Top-k logits
-            logits = outputs.logits
+            logits = outputs.logits  # shape [batch, seq_len, vocab_size]
             topk_vals, topk_indices = torch.topk(logits, k=top_k_logits, dim=-1)
+
+            # Convert to CPU
             topk_vals = topk_vals.cpu()
             topk_indices = topk_indices.cpu()
 
-            # 4) Decode generated text
             final_predictions = [
                 tokenizer.decode(pred, skip_special_tokens=True)
-                for pred in generated_output.cpu()
+                for pred in generated.cpu()
             ]
 
             return {
@@ -140,29 +162,36 @@ def run_inference(
                 "attentions": selected_attentions,
                 "topk_vals": topk_vals,
                 "topk_indices": topk_indices,
-                "final_predictions": final_predictions
+                "input_ids": input_ids.cpu(),
+                "final_predictions": final_predictions,
+                "batch_texts": text_batch
             }
 
         except torch.cuda.OutOfMemoryError:
-            logger.error(f"CUDA OOM Error at batch {idx}. Clearing cache.")
+            logger.error(f"CUDA OOM at batch {batch_idx}. Clearing cache.")
             torch.cuda.empty_cache()
-            return None
-        except Exception as e:
-            logger.exception(f"Unhandled error at batch {idx}: {str(e)}")
+            with open(error_log, "a", encoding="utf-8") as err_log:
+                err_log.write(f"OOM error at batch {batch_idx}.\n")
             return None
 
-    # Now iterate over all prompts in batches
+        except Exception as e:
+            logger.exception(f"Error at batch {batch_idx}: {str(e)}")
+            with open(error_log, "a", encoding="utf-8") as err_log:
+                err_log.write(f"Error at batch {batch_idx}: {str(e)}\n")
+            return None
+
+    total_prompts = len(prompts)
     for start_idx in range(0, total_prompts, batch_size):
         end_idx = start_idx + batch_size
         batch_texts = prompts[start_idx:end_idx]
 
         if start_idx % 1000 == 0:
-            logger.info(f"Processing batch {start_idx} / {total_prompts}...")
+            logger.info(f"Processing batch {start_idx} / {total_prompts}")
 
-        activations = capture_activations(batch_texts, start_idx)
-        if activations is not None:
-            filename = os.path.join(output_dir, f"activations_{start_idx:05d}_{end_idx:05d}.pt")
-            torch.save(activations, filename)
-            logger.debug(f"Saved activations to {filename}")
+        result = capture_activations(batch_texts, start_idx)
+        if result:
+            save_path = os.path.join(output_dir, f"activations_{start_idx:05d}_{end_idx:05d}.pt")
+            torch.save(result, save_path)
+            logger.debug(f"Saved .pt activations => {save_path}")
 
-    logger.info(f"Inference complete. Activations are stored in '{output_dir}'.")
+    logger.info("=== run_inference complete ===")
