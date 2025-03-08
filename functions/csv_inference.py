@@ -1,5 +1,6 @@
 # functions/csv_inference.py
 import os
+import math
 import torch
 import logging
 from transformers import AutoTokenizer, AutoModelForCausalLM
@@ -181,17 +182,28 @@ def run_inference(
             return None
 
     total_prompts = len(prompts)
-    for start_idx in range(0, total_prompts, batch_size):
-        end_idx = start_idx + batch_size
+    # Calculate how many total batches we'll have
+    total_batches = math.ceil(total_prompts / batch_size)
+
+    logger.info(f"Total batches to process: {total_batches}")
+
+    for batch_idx in range(total_batches):
+        start_idx = batch_idx * batch_size
+        end_idx = min((batch_idx + 1) * batch_size, total_prompts)
         batch_texts = prompts[start_idx:end_idx]
 
-        if start_idx % 1000 == 0:
-            logger.info(f"Processing batch {start_idx} / {total_prompts}")
+        # Print/log every 20th batch
+        if batch_idx % 20 == 0:
+            logger.info(f"Processing batch {batch_idx} / {total_batches} "
+                        f"(prompt indices {start_idx}-{end_idx})")
+            print(f"== [Batch {batch_idx} of {total_batches}] "
+                  f"Prompts {start_idx}-{end_idx} ==")  # direct print
 
-        result = capture_activations(batch_texts, start_idx)
+        result = capture_activations(batch_texts, batch_idx)
         if result:
             save_path = os.path.join(output_dir, f"activations_{start_idx:05d}_{end_idx:05d}.pt")
             torch.save(result, save_path)
             logger.debug(f"Saved .pt activations => {save_path}")
 
     logger.info("=== run_inference complete ===")
+    print("=== Inference is complete! ===")
