@@ -16,7 +16,7 @@ PROMPT_FILE = (
 OUTPUT_DIR = (
     os.environ.get("OUTPUT_DIR")
     or globals().get("OUTPUT_DIR")
-    or "output/extractions/mistral7b/jb_small_2"
+    or "output/extractions/code_chameleon/gemma-2-2b"
 )
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
