@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 def load_model_and_tokenizer(
-    model_name="google/gemma-2-9b",
+    model_name="google/gemma-2-9b-it",
     use_bfloat16=True,
     hf_token=None,
     max_seq_length=2048
@@ -46,6 +46,7 @@ def load_model_and_tokenizer(
     logger.info(f"Loading model {model_name} with device_map='auto', bfloat16={use_bfloat16}")
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
+        trust_remote_code=True, 
         torch_dtype=torch.bfloat16 if use_bfloat16 else torch.float32,
         low_cpu_mem_usage=True,
         device_map="auto",
