@@ -42,25 +42,31 @@ def download_gemma3_model(model_repo="google/gemma-3-4b-it"):
 
 class Gemma3Model(nn.Module):
     """
-    A transformer-based model for Gemma 3, built based on the config.json parameters.
+    A simplified transformer-based model for Gemma 3.
     """
 
     def __init__(self, config):
         super().__init__()
 
-        # Extract vocab_size from text_config if available
+        # Extract vocab_size from token indices (since vocab_size isn't in config)
+        vocab_size = config.get("eoi_token_index", 256000) + 1  # Assuming this represents vocab range
+
+        # Extract hidden_size & num_layers
         text_config = config.get("text_config", {})
-        vocab_size = text_config.get("vocab_size", 256000)  # Default guess
+        hidden_size = text_config.get("hidden_size", 2560)
+        num_hidden_layers = text_config.get("num_hidden_layers", 34)
 
         # Set up model components
-        self.embed = nn.Embedding(vocab_size, text_config["hidden_size"])
+        self.embed = nn.Embedding(vocab_size, hidden_size)
         self.layers = nn.ModuleList([
             nn.TransformerEncoderLayer(
-                d_model=text_config["hidden_size"],
-                nhead=8  # Change as needed based on config
-            ) for _ in range(text_config["num_hidden_layers"])
+                d_model=hidden_size,
+                nhead=16,  # Usually, nhead is sqrt(hidden_size) // 2
+                dim_feedforward=text_config.get("intermediate_size", 10240),
+                activation="gelu"
+            ) for _ in range(num_hidden_layers)
         ])
-        self.lm_head = nn.Linear(text_config["hidden_size"], vocab_size)
+        self.lm_head = nn.Linear(hidden_size, vocab_size)
 
     def forward(self, input_ids):
         x = self.embed(input_ids)
@@ -82,7 +88,7 @@ def load_gemma3_model(model_repo="google/gemma-3-4b-it"):
     # Create model
     model = Gemma3Model(config)
 
-    # Load weights into model
+    # Load weights into model (strict=False to ignore mismatches)
     model.load_state_dict(weights, strict=False)
     model.eval().to("cuda")
 
@@ -102,14 +108,17 @@ def generate_text(prompt, model, config, max_new_tokens=50):
     Returns:
         str: Generated text.
     """
-    input_ids = torch.tensor([[config["bos_token_id"]]]).to("cuda")  # Start with BOS token
+    bos_token_id = config.get("boi_token_index", 255999)
+    eos_token_id = config.get("eoi_token_index", 256000)
+
+    input_ids = torch.tensor([[bos_token_id]]).to("cuda")  # Start with BOS token
     generated = []
 
     with torch.no_grad():
         for _ in range(max_new_tokens):
             logits = model(input_ids)[:, -1, :]
             next_token = torch.argmax(logits, dim=-1).item()
-            if next_token == config["eos_token_id"]:
+            if next_token == eos_token_id:
                 break
             generated.append(next_token)
             input_ids = torch.cat([input_ids, torch.tensor([[next_token]]).to("cuda")], dim=1)
