@@ -13,6 +13,7 @@ def download_gemma3_model(model_repo="google/gemma-3-4b-it"):
         model_path (str): The path where the model files are stored.
         weights (dict): The model weights loaded from safetensors.
         config (dict): The model configuration.
+        vocab_size (int): Vocabulary size extracted from tokenizer.
     """
     # Download model files
     model_path = snapshot_download(repo_id=model_repo)
@@ -36,8 +37,18 @@ def download_gemma3_model(model_repo="google/gemma-3-4b-it"):
         config = json.load(f)
 
     print("Loaded Model Config:", config)
-    
-    return model_path, weights, config
+
+    # Load tokenizer and extract vocab size
+    tokenizer_path = os.path.join(model_path, "tokenizer_config.json")
+    if not os.path.exists(tokenizer_path):
+        raise FileNotFoundError("No tokenizer_config.json found! Cannot determine vocab size.")
+
+    with open(tokenizer_path, "r") as f:
+        tokenizer_config = json.load(f)
+
+    vocab_size = tokenizer_config.get("vocab_size", 256000)  # Default fallback
+
+    return model_path, weights, config, vocab_size
 
 
 class Gemma3Model(nn.Module):
@@ -45,11 +56,8 @@ class Gemma3Model(nn.Module):
     A simplified transformer-based model for Gemma 3.
     """
 
-    def __init__(self, config):
+    def __init__(self, config, vocab_size):
         super().__init__()
-
-        # Extract vocab_size from token indices (since vocab_size isn't in config)
-        vocab_size = config.get("eoi_token_index", 256000) + 1  # Assuming this represents vocab range
 
         # Extract hidden_size & num_layers
         text_config = config.get("text_config", {})
@@ -82,20 +90,21 @@ def load_gemma3_model(model_repo="google/gemma-3-4b-it"):
     Returns:
         model (Gemma3Model): The initialized model with loaded weights.
         config (dict): The model configuration.
+        vocab_size (int): Vocabulary size.
     """
-    model_path, weights, config = download_gemma3_model(model_repo)
+    model_path, weights, config, vocab_size = download_gemma3_model(model_repo)
 
     # Create model
-    model = Gemma3Model(config)
+    model = Gemma3Model(config, vocab_size)
 
     # Load weights into model (strict=False to ignore mismatches)
     model.load_state_dict(weights, strict=False)
     model.eval().to("cuda")
 
-    return model, config
+    return model, config, vocab_size
 
 
-def generate_text(prompt, model, config, max_new_tokens=50):
+def generate_text(prompt, model, config, vocab_size, max_new_tokens=50):
     """
     Generates text using the Gemma 3 model.
 
@@ -103,6 +112,7 @@ def generate_text(prompt, model, config, max_new_tokens=50):
         prompt (str): Input text prompt.
         model (Gemma3Model): The loaded model.
         config (dict): Model configuration.
+        vocab_size (int): The vocabulary size.
         max_new_tokens (int): Number of new tokens to generate.
 
     Returns:
