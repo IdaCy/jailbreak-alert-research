@@ -33,6 +33,7 @@ def load_model_and_tokenizer(
     logger.info(f"Loading tokenizer from: {model_name}")
     tokenizer = AutoTokenizer.from_pretrained(
         model_name,
+        trust_remote_code=True, 
         use_auth_token=hf_token
     )
     if tokenizer.pad_token is None:
