@@ -42,19 +42,25 @@ def download_gemma3_model(model_repo="google/gemma-3-4b-it"):
 
 class Gemma3Model(nn.Module):
     """
-    A simple transformer-based model for Gemma 3, built based on the config.json parameters.
+    A transformer-based model for Gemma 3, built based on the config.json parameters.
     """
 
     def __init__(self, config):
         super().__init__()
-        self.embed = nn.Embedding(config["vocab_size"], config["hidden_size"])
+
+        # Extract vocab_size from text_config if available
+        text_config = config.get("text_config", {})
+        vocab_size = text_config.get("vocab_size", 256000)  # Default guess
+
+        # Set up model components
+        self.embed = nn.Embedding(vocab_size, text_config["hidden_size"])
         self.layers = nn.ModuleList([
             nn.TransformerEncoderLayer(
-                d_model=config["hidden_size"],
-                nhead=8
-            ) for _ in range(config["num_hidden_layers"])
+                d_model=text_config["hidden_size"],
+                nhead=8  # Change as needed based on config
+            ) for _ in range(text_config["num_hidden_layers"])
         ])
-        self.lm_head = nn.Linear(config["hidden_size"], config["vocab_size"])
+        self.lm_head = nn.Linear(text_config["hidden_size"], vocab_size)
 
     def forward(self, input_ids):
         x = self.embed(input_ids)
