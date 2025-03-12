@@ -51,12 +51,44 @@ def load_model_and_tokenizer(
         torch_dtype=torch.bfloat16 if use_bfloat16 else torch.float32,
         low_cpu_mem_usage=True,
         device_map="auto",
-        max_memory=max_memory,
-        use_auth_token=hf_token
+        max_memory=max_memory
     )
     model.eval()
     logger.info("Model loaded successfully. Returning tokenizer and model.")
 
+    return tokenizer, model
+
+
+def load_gemma3_model(
+    model_name="google/gemma-3-4b-it",
+    use_bfloat16=True,
+    hf_token=None
+):
+    """
+    Load the Gemma 3 model and tokenizer.
+    
+    :param model_name: The Hugging Face model ID.
+    :param use_bfloat16: Load model weights in bfloat16 if True, otherwise float32.
+    :param hf_token: Optional Hugging Face authentication token.
+    :return: (tokenizer, model) loaded on GPU.
+    """
+    # Ensure CUDA is available
+    if not torch.cuda.is_available():
+        raise RuntimeError("No GPU available. Ensure Colab runtime is set to GPU.")
+
+    # Load tokenizer
+    tokenizer = AutoTokenizer.from_pretrained(model_name, use_auth_token=hf_token)
+
+    # Load model with appropriate dtype
+    torch_dtype = torch.bfloat16 if use_bfloat16 else torch.float32
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        torch_dtype=torch_dtype,
+        device_map="auto",
+        use_auth_token=hf_token
+    )
+
+    model.eval()  # Set model to evaluation mode
     return tokenizer, model
 
 
