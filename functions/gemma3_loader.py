@@ -81,6 +81,10 @@ def download_gemma3_model(model_repo="google/gemma-3-4b-it"):
     # Load weights
     weights = load_file(model_file)
 
+    # Cast weights to FP16 to reduce memory usage
+    for k in list(weights.keys()):
+        weights[k] = weights[k].half()
+
     # Load config.json
     config_path = os.path.join(model_path, "config.json")
     with open(config_path, "r") as f:
@@ -142,7 +146,8 @@ def load_gemma3_model(model_repo="google/gemma-3-4b-it"):
     model_path, weights, config, vocab_size = download_gemma3_model(model_repo)
 
     # Create model
-    model = Gemma3Model(config, vocab_size)
+    #model = Gemma3Model(config, vocab_size)
+    model = Gemma3Model(config, vocab_size).half()
 
     # Load weights into model (strict=False to ignore mismatches)
     missing, unexpected = model.load_state_dict(weights, strict=False)
