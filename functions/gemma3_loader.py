@@ -3,6 +3,7 @@ import json
 import torch
 import torch.nn as nn
 from safetensors.torch import load_file
+from safetensors import safe_open
 from huggingface_hub import snapshot_download
 
 # We'll import sentencepiece to parse .model if it exists.
@@ -58,15 +59,12 @@ def _infer_vocab_size(tokenizer_dir: str, config: dict) -> int:
 
 def download_gemma3_model(model_repo="google/gemma-3-4b-it"):
     """
-    Downloads the Gemma 3 model from Hugging Face and loads its weights and configuration.
-    
-    Returns:
-        model_path (str): The path where the model files are stored.
-        weights (dict): The model weights loaded from safetensors.
-        config (dict): The model configuration.
-        vocab_size (int): Vocabulary size extracted from tokenizer or fallback.
+    Downloads the Gemma 3 model from Hugging Face and returns:
+    - model_path (str): local folder
+    - config (dict): loaded from config.json
+    - vocab_size (int)
+    - model_file (str): path to the .safetensors file
     """
-    # Download model files
     model_path = snapshot_download(repo_id=model_repo)
     print(f"Model downloaded to: {model_path}")
 
@@ -74,28 +72,21 @@ def download_gemma3_model(model_repo="google/gemma-3-4b-it"):
     model_files = [f for f in os.listdir(model_path) if f.endswith(".safetensors")]
     if not model_files:
         raise FileNotFoundError("No safetensors model file found!")
-
     model_file = os.path.join(model_path, model_files[0])
-    print(f"Loading model weights from: {model_file}")
-
-    # Load weights
-    weights = load_file(model_file)
-
-    # Cast weights to FP16 to reduce memory usage
-    for k in list(weights.keys()):
-        weights[k] = weights[k].half()
 
     # Load config.json
     config_path = os.path.join(model_path, "config.json")
     with open(config_path, "r") as f:
         config = json.load(f)
-    print("Loaded Model Config:", config)
 
-    # Infer vocab_size from tokenizer files or fallback
+    # Infer vocab_size from tokenizer or fallback
     vocab_size = _infer_vocab_size(model_path, config)
-    print(f"Inferred vocab_size = {vocab_size}")
 
-    return model_path, weights, config, vocab_size
+    print("Loaded Model Config:", config)
+    print(f"Inferred vocab_size = {vocab_size}")
+    print(f"Will stream load from: {model_file}")
+
+    return model_path, config, vocab_size, model_file
 
 
 class Gemma3Model(nn.Module):
@@ -136,26 +127,51 @@ class Gemma3Model(nn.Module):
 
 def load_gemma3_model(model_repo="google/gemma-3-4b-it"):
     """
-    Downloads and initializes the Gemma 3 model.
-    
-    Returns:
-        model (Gemma3Model): The initialized model with loaded weights.
-        config (dict): The model configuration.
-        vocab_size (int): Vocabulary size.
+    Downloads and initializes the Gemma 3 model (in FP16), using a streaming approach
+    so we don't blow up CPU RAM with the entire weight dict at once.
     """
-    model_path, weights, config, vocab_size = download_gemma3_model(model_repo)
+    model_path, config, vocab_size, model_file = download_gemma3_model(model_repo)
 
-    # Create model
-    #model = Gemma3Model(config, vocab_size)
-    model = Gemma3Model(config, vocab_size).half()
+    # Create model in FP16 on GPU
+    model = Gemma3Model(config, vocab_size).half().cuda()
 
-    # Load weights into model (strict=False to ignore mismatches)
-    missing, unexpected = model.load_state_dict(weights, strict=False)
-    print("Missing keys:", missing)
-    print("Unexpected keys:", unexpected)
+    # Now we stream each param from safetensors directly into the model.
+    with safe_open(model_file, framework="pt", device="cpu") as f:
+        # All parameter keys in the safetensor
+        weight_keys = list(f.keys())
 
-    model.eval().to("cuda")
+        # Get a dictionary of { param_name: param_object } in the model
+        model_params = dict(model.named_parameters())
 
+        missing_keys = []
+        unexpected_keys = []
+        
+        with torch.no_grad():
+            for wname in weight_keys:
+                if wname not in model_params:
+                    # This weight exists in the file but not in the model
+                    unexpected_keys.append(wname)
+                    continue
+
+                # Read one weight at a time from disk
+                tensor = f.get_tensor(wname)
+                # Safetensors will have loaded it as float32 by default (usually),
+                # so cast to half *before* copying into GPU param:
+                if tensor.dtype != torch.float16:
+                    tensor = tensor.half()
+
+                # Copy to GPU param
+                model_params[wname].copy_(tensor)
+
+            # Now check if any model params did not get weights from file
+            for pname in model_params.keys():
+                if pname not in weight_keys:
+                    missing_keys.append(pname)
+    
+    print("Missing keys:", missing_keys)
+    print("Unexpected keys:", unexpected_keys)
+
+    model.eval()
     return model, config, vocab_size
 
 
