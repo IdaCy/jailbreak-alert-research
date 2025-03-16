@@ -16,12 +16,12 @@ from sklearn.metrics import accuracy_score, f1_score, classification_report
 GOOD_DIR = (
     os.environ.get("GOOD_DIR")
     or globals().get("GOOD_DIR")
-    or "output/extractions/gemma2b/good"
+    or "output/extractions/good"
 )
 JB_DIR = (
     os.environ.get("JB_DIR")
     or globals().get("JB_DIR")
-    or "output/extractions/gemma2b/jb"
+    or "output/extractions/jb"
 )
 
 """# Where we might store logs or final results
