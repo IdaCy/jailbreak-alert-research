@@ -9,9 +9,9 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, f1_score, classification_report
 
-###############################################################################
-# 1. Configuration
-###############################################################################
+# ------------------------------------------------------------------------
+# 1. Configuration and Setup
+# ------------------------------------------------------------------------
 # Directories for the two runs:
 GOOD_DIR = (
     os.environ.get("GOOD_DIR")
@@ -71,9 +71,9 @@ logging.info(f"TRAIN_TEST_SPLIT_RATIO: {TRAIN_TEST_SPLIT_RATIO}")
 logging.info(f"Logging to: {LOG_FILE}")
 
 
-###############################################################################
+# ------------------------------------------------------------------------
 # 2. Step: Pair up the .pt files from GOOD_DIR and JB_DIR
-###############################################################################
+# ------------------------------------------------------------------------
 def pair_activation_files(good_dir, jb_dir):
     """
     We look for files named 'activations_XXXXX_YYYYY.pt' in both directories.
@@ -101,9 +101,9 @@ def pair_activation_files(good_dir, jb_dir):
     return matched_pairs
 
 
-###############################################################################
+# ------------------------------------------------------------------------
 # 3. Load and Combine Activations
-###############################################################################
+# ------------------------------------------------------------------------
 def load_and_combine(good_jb_pairs):
     """
     For each pair (good_file, jb_file):
@@ -141,9 +141,9 @@ def load_and_combine(good_jb_pairs):
     return combined_data
 
 
-###############################################################################
+# ------------------------------------------------------------------------
 # 4. Build Dataset (Same as Old Code, but uses the combined shape)
-###############################################################################
+# ------------------------------------------------------------------------
 def build_dataset(activation_data, extract_layers):
     """
     After loading clean_act / typo_act, we make sure to flatten any batch dimension
@@ -208,9 +208,9 @@ def build_dataset(activation_data, extract_layers):
 
     return results
 
-###############################################################################
+# ------------------------------------------------------------------------
 # 5. Train/Evaluate 
-###############################################################################
+# ------------------------------------------------------------------------
 def train_and_evaluate_layer(X, y, layer_id, train_test_ratio=0.8):
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, train_size=train_test_ratio, random_state=42, shuffle=True
