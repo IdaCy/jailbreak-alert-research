@@ -8,29 +8,32 @@ import pandas as pd
 from tqdm import tqdm
 from transformers import AutoTokenizer
 
+##############################################################################
+# 1) Logging Setup
+##############################################################################
 def init_logger(
-    log_file="analyses/3e_results_attention/attention_analysis.log",
+    log_file="analyses/attention/attention_analysis.log",
     file_level=logging.DEBUG
 ):
     """
     Creates a logger that logs everything (DEBUG and up) to a file,
-    but ONLY CRITICAL to the console. This is as minimal as you can get
-    without outright disabling logging.
+    but ONLY CRITICAL to the console.
     """
     # 1) Remove any existing handlers on the root logger
     root_logger = logging.getLogger()
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
+    # Optionally set root logger to CRITICAL so it doesn't forward logs
     root_logger.setLevel(logging.CRITICAL)
 
     # 2) Create our named logger
     logger = logging.getLogger("ReNeLLMLogger")
-    logger.setLevel(logging.DEBUG)
-    logger.propagate = False
+    logger.setLevel(logging.DEBUG)  # internally handle all messages
+    logger.propagate = False        # don't pass logs to root logger
 
     os.makedirs(os.path.dirname(log_file), exist_ok=True)
 
-    # File handler
+    # 3) File handler (captures everything)
     fh = logging.FileHandler(log_file, mode="w", encoding="utf-8")
     fh.setLevel(file_level)
     file_fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s",
@@ -38,7 +41,7 @@ def init_logger(
     fh.setFormatter(file_fmt)
     logger.addHandler(fh)
 
-    # Console handler (critical-only)
+    # 4) Console handler (only CRITICAL)
     ch = logging.StreamHandler()
     ch.setLevel(logging.CRITICAL)
     console_fmt = logging.Formatter("[%(levelname)s] %(message)s")
@@ -49,10 +52,13 @@ def init_logger(
     return logger
 
 
+##############################################################################
+# 2) Helper Functions for Sublist/Substring Matching (includes fix for no leading space)
+##############################################################################
 def try_sublist_match(tokenizer, input_ids, phrase):
     """
     Sublist match of token IDs for `phrase` in `input_ids`.
-    Returns a list of matched token positions.
+    Returns a list of matched token positions if found.
     """
     phrase_ids = tokenizer(phrase, add_special_tokens=False)["input_ids"]
     example_id_list = input_ids.tolist()
@@ -81,16 +87,17 @@ def substring_offset_mapping(tokenizer, input_ids, phrase):
 
     positions = []
     for i, (ch_s, ch_e) in enumerate(offsets):
+        if ch_s is None or ch_e is None:
+            continue
         # Overlap check
-        if ch_s is not None and ch_e is not None:
-            if ch_s < end_char and ch_e > start_char:
-                positions.append(i)
+        if (ch_s < end_char) and (ch_e > start_char):
+            positions.append(i)
     return positions
 
 
 def find_token_positions_flexible(tokenizer, input_ids, phrase, logger=None, log_prefix=""):
     """
-    Attempt 3 matches:
+    Attempt matches:
       1) direct sublist
       2) leading-space sublist
       3) substring offset approach
@@ -123,189 +130,225 @@ def find_token_positions_flexible(tokenizer, input_ids, phrase, logger=None, log
     return sub_pos
 
 
-def compute_fraction_of_attention(attn_head, matched_positions):
-    """
-    For a single attention head (shape [seq_len, seq_len]) and
-    a list of matched token positions, compute the average fraction
-    of attention that each token in the sequence places on those matched positions.
-    """
-    if not matched_positions:
-        return 0.0
-    seq_len = attn_head.shape[0]
-    fraction_vals = []
-    for q in range(seq_len):
-        row_sum = attn_head[q].sum().item()
-        if row_sum <= 0:
-            fraction_vals.append(0.0)
-        else:
-            phrase_sum = attn_head[q, matched_positions].sum().item()
-            fraction_vals.append(phrase_sum / row_sum)
-    return float(np.mean(fraction_vals))
-
-
+##############################################################################
+# 3) Main Attention-Analysis Function
+##############################################################################
 def run_attention_analysis(
-    prompt_type="attack",
+    prompt_key,
     base_dir="output/gemma-2-9b-it",
-    prompts_file="data/renellm/full_levels.json",
+    main_prompts_file="data/renellm/full_levels.json",
     harmful_file="data/renellm/full_extracted_harmful.json",
     actionable_file="data/renellm/full_extracted_actionable.json",
-    output_dir="analyses/3e_results_attention",
+    output_dir="analyses/attention",
     model_name="google/gemma-2-9b-it",
     logger=None
 ):
     """
-    Analyzes how much attention the model pays to a *harmful substring*
-    and an *actionable substring*, for a single prompt type, using
-    previously saved .pt files from inference.
+    Analyzes how much attention is placed on the "harmful" substring
+    and the "actionable" substring for a given `prompt_key`.
 
-    Steps:
-      1) Load the prompt data (prompts_file), which includes `element_id` and the text used for inference.
-      2) Build dictionaries from harmful_file and actionable_file by `element_id`.
-      3) For each .pt file in base_dir/prompt_type, find the 'attentions', 'input_ids', and 'original_indices'.
-         - Identify the matching row in the main prompts data to retrieve `element_id`.
-         - Retrieve the harmful/actionable substrings from their respective JSONs for that same prompt_type.
-         - Find positions in the input_ids (via flexible sublist/substring matching).
-         - Compute fraction of attention for each (harmful & actionable).
-      4) Save a CSV with columns:
-         [folder, global_idx, element_id, layer, head,
-          fraction_harmful, fraction_actionable]
+    1. Loads the main prompts (full_levels.json).
+    2. Builds a mapping from element_id -> harmful and element_id -> actionable
+       using the respective JSONs (full_extracted_harmful, full_extracted_actionable).
+    3. Loads the .pt activation files from base_dir/<prompt_key>/activations_*.pt
+       that were produced when running inference with the selected prompt_key.
+    4. For each sample in the batch, uses `global_idx` to look up the correct row
+       in the main prompts, retrieves that row's `element_id`,
+       then obtains the harmful & actionable substrings from the respective
+       extraction JSONs. Finally, measures the fraction of attention
+       allocated to the matched tokens in each head of each layer.
+
+    Outputs a CSV with columns:
+        [folder, global_idx, element_id, layer, head, phrase_type, fraction_attention]
+
+    where `phrase_type` is either "harmful" or "actionable".
     """
-
+    # ------------------------------------------------------------------------------
+    # 1) Setup logger if not provided
+    # ------------------------------------------------------------------------------
     if logger is None:
         logger = logging.getLogger(__name__)
         if not logger.handlers:
             logger.addHandler(logging.StreamHandler())
-            logger.setLevel(logging.WARNING)
+            logger.setLevel(logging.INFO)
 
-    logger.info(f"=== Starting attention analysis for PROMPT_TYPE={prompt_type} ===")
+    logger.info(f"=== Starting attention analysis for prompt_key={prompt_key} ===")
     os.makedirs(output_dir, exist_ok=True)
 
-    # (A) Load main prompts data
-    if not os.path.isfile(prompts_file):
-        raise FileNotFoundError(f"Could not find prompts_file at {prompts_file}")
-    with open(prompts_file, "r", encoding="utf-8") as f:
-        prompts_data = json.load(f)
-    logger.info(f"Loaded {len(prompts_data)} rows from prompts_file.")
+    # ------------------------------------------------------------------------------
+    # 2) Load main prompts
+    # ------------------------------------------------------------------------------
+    if not os.path.isfile(main_prompts_file):
+        raise FileNotFoundError(f"Could not find {main_prompts_file}")
+    with open(main_prompts_file, "r", encoding="utf-8") as f:
+        main_data = json.load(f)
 
-    # We'll build a quick list -> by index we get the row
-    # So 'element_id' = prompts_data[idx]["element_id"]
-    # and the text for prompt_type is prompts_data[idx][prompt_type] (the original prompt)
-
-    # (B) Load harmful data (build a dict from element_id -> row)
+    # ------------------------------------------------------------------------------
+    # 3) Build dictionary for harmful_data: element_id -> { ... row data ... }
+    # ------------------------------------------------------------------------------
     if not os.path.isfile(harmful_file):
-        raise FileNotFoundError(f"Could not find harmful_file at {harmful_file}")
+        raise FileNotFoundError(f"Could not find {harmful_file}")
     with open(harmful_file, "r", encoding="utf-8") as f:
-        harmful_list = json.load(f)
+        harmful_data = json.load(f)
+
     harmful_map = {}
-    for row in harmful_list:
-        eid = row["element_id"]
-        harmful_map[eid] = row
-    logger.info(f"Loaded {len(harmful_map)} rows from harmful_file.")
+    for row in harmful_data:
+        e_id = row["element_id"]
+        harmful_map[e_id] = row
 
-    # (C) Load actionable data (dict from element_id -> row)
+    # ------------------------------------------------------------------------------
+    # 4) Build dictionary for actionable_data: element_id -> { ... row data ... }
+    # ------------------------------------------------------------------------------
     if not os.path.isfile(actionable_file):
-        raise FileNotFoundError(f"Could not find actionable_file at {actionable_file}")
+        raise FileNotFoundError(f"Could not find {actionable_file}")
     with open(actionable_file, "r", encoding="utf-8") as f:
-        actionable_list = json.load(f)
-    actionable_map = {}
-    for row in actionable_list:
-        eid = row["element_id"]
-        actionable_map[eid] = row
-    logger.info(f"Loaded {len(actionable_map)} rows from actionable_file.")
+        actionable_data = json.load(f)
 
-    # (D) Gather the .pt files
-    folder_path = os.path.join(base_dir, prompt_type)
+    actionable_map = {}
+    for row in actionable_data:
+        e_id = row["element_id"]
+        actionable_map[e_id] = row
+
+    # ------------------------------------------------------------------------------
+    # 5) Load the tokenizer
+    # ------------------------------------------------------------------------------
+    logger.info(f"Loading tokenizer for model={model_name}")
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    # ------------------------------------------------------------------------------
+    # 6) Find the .pt files in base_dir/<prompt_key>/
+    # ------------------------------------------------------------------------------
+    folder_path = os.path.join(base_dir, prompt_key)
     pt_files = sorted(glob.glob(os.path.join(folder_path, "activations_*.pt")))
-    logger.info(f"Found {len(pt_files)} .pt files in '{folder_path}'.")
+    logger.info(f"Found {len(pt_files)} .pt files in {folder_path}")
     if not pt_files:
         logger.warning("No .pt files found. Exiting.")
         return
 
-    # (E) Process each .pt
     results_rows = []
-    for pt_file in tqdm(pt_files, desc=f"Folder={prompt_type}", disable=True):
+
+    # ------------------------------------------------------------------------------
+    # 7) Process each .pt file
+    # ------------------------------------------------------------------------------
+    for pt_file in tqdm(pt_files, desc=f"Folder={prompt_key}", ncols=80, disable=True):
         logger.debug(f"Loading .pt file: {pt_file}")
         data_dict = torch.load(pt_file, map_location="cpu")
+
+        # 7a) Check we have attentions & input_ids
         all_attentions = data_dict.get("attentions", None)
         input_ids_tensor = data_dict.get("input_ids", None)
-        original_indices = data_dict.get("original_indices", None)
-
-        if all_attentions is None or input_ids_tensor is None or original_indices is None:
-            logger.warning(f"Missing some keys in {pt_file} => skipping.")
+        if all_attentions is None or input_ids_tensor is None:
+            logger.warning(f"File missing 'attentions' or 'input_ids': {pt_file}. Skipping.")
             continue
 
-        # Convert each layer to float32
+        # Convert each layer's attention to float32
         layer_names = sorted(all_attentions.keys(), key=lambda x: int(x.split("_")[-1]))
-        attentions_list = [all_attentions[l].to(torch.float32) for l in layer_names]
+        attentions_list = []
+        for lname in layer_names:
+            attn_t = all_attentions[lname].to(torch.float32)
+            attentions_list.append(attn_t)
         n_layers = len(attentions_list)
+
+        # 7b) original_indices to map batch -> global_idx
+        original_indices = data_dict.get("original_indices", None)
+        if not original_indices:
+            # fallback from filename if needed
+            basename = os.path.basename(pt_file).replace(".pt", "")
+            parts = basename.split("_")  # e.g. ["activations", "00000", "00004"]
+            start_i = int(parts[1])
+            logger.debug(f"No 'original_indices' found; fallback start_i={start_i}")
 
         batch_size, seq_len = input_ids_tensor.shape
 
-        # For each sample in the batch
+        # 7c) For each sample in the batch
         for i_in_batch in range(batch_size):
-            global_idx = original_indices[i_in_batch]
-            # In the "prompts_file", the row is prompts_data[global_idx]
-            # So we read element_id from that
-            if global_idx >= len(prompts_data):
-                logger.debug(f"global_idx={global_idx} >= {len(prompts_data)} => skipping.")
+            if original_indices:
+                global_idx = original_indices[i_in_batch]
+            else:
+                global_idx = start_i + i_in_batch
+
+            # Safety check
+            if global_idx >= len(main_data):
+                logger.debug(
+                    f"global_idx={global_idx} >= main_data size={len(main_data)}. Skipping."
+                )
                 continue
 
-            prompt_row = prompts_data[global_idx]
-            element_id = prompt_row.get("element_id", None)
-            if element_id is None:
-                logger.debug(f"No element_id in row {global_idx}? skipping.")
+            # Grab this row from the main prompt data
+            prompt_row = main_data[global_idx]
+            elem_id = prompt_row["element_id"]
+
+            # If either map is missing the element_id, skip
+            if elem_id not in harmful_map or elem_id not in actionable_map:
+                logger.warning(f"Element {elem_id} not found in harmful/actionable maps. Skipping.")
                 continue
 
-            # Grab the harmful substring
-            # e.g. harmful_map[element_id][prompt_type]
-            harmful_str = ""
-            actionable_str = ""
-            if element_id in harmful_map:
-                harmful_str = harmful_map[element_id].get(prompt_type, "").strip()
-            else:
-                logger.debug(f"element_id={element_id} not in harmful_map? skipping harmful part.")
-            if element_id in actionable_map:
-                actionable_str = actionable_map[element_id].get(prompt_type, "").strip()
-            else:
-                logger.debug(f"element_id={element_id} not in actionable_map? skipping actionable part.")
+            # 7d) Retrieve the harmful & actionable substrings for the chosen prompt_key
+            harmful_str = harmful_map[elem_id].get(prompt_key, "")
+            actionable_str = actionable_map[elem_id].get(prompt_key, "")
 
-            # Token positions
-            input_ids = input_ids_tensor[i_in_batch]
+            # 7e) For each type ("harmful", "actionable"), find matched positions
+            #     Then measure fraction of attention per layer/head
+            for phrase_type, phrase_str in [("harmful", harmful_str),
+                                            ("actionable", actionable_str)]:
 
-            # Find positions for harmful_str
-            harmful_positions = find_token_positions_flexible(
-                tokenizer, input_ids, harmful_str, logger=logger,
-                log_prefix=f"[global_idx={global_idx}, harmful]"
-            )
-            # Find positions for actionable_str
-            actionable_positions = find_token_positions_flexible(
-                tokenizer, input_ids, actionable_str, logger=logger,
-                log_prefix=f"[global_idx={global_idx}, actionable]"
-            )
+                matched_positions = find_token_positions_flexible(
+                    tokenizer,
+                    input_ids_tensor[i_in_batch],
+                    phrase_str,
+                    logger=logger,
+                    log_prefix=f"[glob_idx={global_idx}, {phrase_type}] "
+                )
 
-            # For each layer & head, compute fraction
-            for layer_idx, attn_batch in enumerate(attentions_list):
-                attn_l = attn_batch[i_in_batch]  # shape [n_heads, seq_len, seq_len]
-                n_heads = attn_l.shape[0]
-                for h_idx in range(n_heads):
-                    attn_head = attn_l[h_idx]
-                    fraction_harmful = compute_fraction_of_attention(attn_head, harmful_positions)
-                    fraction_actionable = compute_fraction_of_attention(attn_head, actionable_positions)
+                # Now compute fraction of attention over matched tokens
+                for layer_idx, attn_batch in enumerate(attentions_list):
+                    attn_l = attn_batch[i_in_batch]  # shape [n_heads, seq_len, seq_len]
+                    n_heads = attn_l.shape[0]
+                    for h_idx in range(n_heads):
+                        attn_head = attn_l[h_idx]
 
-                    row = {
-                        "folder": prompt_type,
-                        "global_idx": global_idx,
-                        "element_id": element_id,
-                        "layer": layer_idx,
-                        "head": h_idx,
-                        "fraction_harmful": fraction_harmful,
-                        "fraction_actionable": fraction_actionable
-                    }
-                    results_rows.append(row)
+                        if not matched_positions:
+                            # If no match, fraction=0
+                            row = {
+                                "folder": prompt_key,
+                                "global_idx": global_idx,
+                                "element_id": elem_id,
+                                "layer": layer_idx,
+                                "head": h_idx,
+                                "phrase_type": phrase_type,
+                                "fraction_attention": 0.0
+                            }
+                            results_rows.append(row)
+                            continue
 
-    # (F) Save final CSV
+                        fraction_vals = []
+                        for q in range(seq_len):
+                            row_sum = attn_head[q].sum().item()
+                            if row_sum <= 0:
+                                fraction_vals.append(0.0)
+                            else:
+                                phrase_sum = attn_head[q, matched_positions].sum().item()
+                                fraction_vals.append(phrase_sum / row_sum)
+                        mean_fraction = float(np.mean(fraction_vals))
+
+                        row = {
+                            "folder": prompt_key,
+                            "global_idx": global_idx,
+                            "element_id": elem_id,
+                            "layer": layer_idx,
+                            "head": h_idx,
+                            "phrase_type": phrase_type,
+                            "fraction_attention": mean_fraction
+                        }
+                        results_rows.append(row)
+
+    # ------------------------------------------------------------------------------
+    # 8) Convert to DataFrame and save
+    # ------------------------------------------------------------------------------
     df = pd.DataFrame(results_rows)
-    out_csv = os.path.join(output_dir, f"attention_fractions_{prompt_type}.csv")
+    out_csv = os.path.join(output_dir, f"attention_fractions_{prompt_key}.csv")
     df.to_csv(out_csv, index=False)
-    logger.info(f"Saved {len(df)} rows to '{out_csv}'.")
+    logger.info(f"Saved {len(df)} rows to {out_csv}")
     logger.info("Done attention analysis.")
