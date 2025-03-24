@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 from transformers import AutoTokenizer
+import string
 
 ##############################################################################
 # 1) Logging Setup
@@ -53,8 +54,9 @@ def init_logger(
 
 
 ##############################################################################
-# 2) Helper Functions for Sublist/Substring Matching (includes fix for no leading space)
+# 2) Helper Functions for Sublist/Substring Matching
 ##############################################################################
+
 def try_sublist_match(tokenizer, input_ids, phrase):
     """
     Sublist match of token IDs for `phrase` in `input_ids`.
@@ -70,37 +72,85 @@ def try_sublist_match(tokenizer, input_ids, phrase):
     return sorted(set(matches))
 
 
-def substring_offset_mapping(tokenizer, input_ids, phrase):
+def substring_offset_mapping_punc_agnostic(tokenizer, input_ids, phrase):
     """
-    Decodes input_ids into text, finds substring positions of `phrase`,
-    then uses offset mappings to translate back into token positions.
-    Returns a list of matched token indices.
+    1) Decode input_ids to text (skipping special tokens).
+    2) Remove all punctuation (and lowercase) from both text and phrase.
+    3) Find the substring index in the "clean" text.
+    4) Map that match back to the original text's character positions.
+    5) Use the original offset mappings to figure out which tokens overlap.
+    6) Return the list of matched token indices.
+
+    Ignores punctuation differences but preserves existing whitespace alignment.
     """
-    decoded_text = tokenizer.decode(input_ids, skip_special_tokens=True)
-    idx = decoded_text.find(phrase)
+    original_text = tokenizer.decode(input_ids, skip_special_tokens=True)
+
+    # Clean up the text/phrase by removing punctuation and lowercasing
+    def remove_punc_and_lower(s):
+        return "".join(ch for ch in s.lower() if ch not in string.punctuation)
+
+    clean_text = remove_punc_and_lower(original_text)
+    clean_phrase = remove_punc_and_lower(phrase.strip())
+
+    if not clean_phrase:
+        return []
+
+    # Find substring in punctuation-removed text
+    idx = clean_text.find(clean_phrase)
     if idx == -1:
         return []
-    encoded = tokenizer(decoded_text, return_offsets_mapping=True)
-    offsets = encoded["offset_mapping"]
-    start_char = idx
-    end_char = idx + len(phrase)
 
-    positions = []
-    for i, (ch_s, ch_e) in enumerate(offsets):
-        if ch_s is None or ch_e is None:
-            continue
+    # The matched substring in the cleaned text runs from [idx, idx + len(clean_phrase))
+    match_start = idx
+    match_end = idx + len(clean_phrase)  # exclusive
+
+    # We need to figure out which original-text characters correspond
+    # to indices [match_start:match_end] in the cleaned text.
+    # We'll iterate over original_text, building the cleaned version on the fly
+    # and track the original indices.
+    mapping_positions = []
+    current_clean_pos = 0
+
+    for i, ch in enumerate(original_text.lower()):
+        # Each time we add a non-punctuation char, that increments current_clean_pos.
+        if ch not in string.punctuation:
+            if current_clean_pos == match_start:
+                # This i is our "start_char" in the original text
+                start_char = i
+            if current_clean_pos == match_end - 1:
+                # We'll record the last char's index for the end region
+                end_char_inclusive = i
+            current_clean_pos += 1
+
+    # If we never found them properly (very unlikely but just in case):
+    # For example, if match_end-1 never matched anything.
+    # We'll do a fallback return if something goes off.
+    # But normally we have start_char and end_char_inclusive by here.
+    if match_end - 1 >= current_clean_pos:
+        return []
+
+    # Convert inclusive char index to exclusive bound
+    end_char_exclusive = end_char_inclusive + 1
+
+    # Now do a normal offset-mapping pass to see which tokens overlap that range
+    encoded = tokenizer(original_text, return_offsets_mapping=True)
+    offsets = encoded["offset_mapping"]
+    matched_token_ids = []
+    for token_idx, (ch_s, ch_e) in enumerate(offsets):
         # Overlap check
-        if (ch_s < end_char) and (ch_e > start_char):
-            positions.append(i)
-    return positions
+        if ch_s is not None and ch_e is not None:
+            if (ch_s < end_char_exclusive) and (ch_e > start_char):
+                matched_token_ids.append(token_idx)
+
+    return matched_token_ids
 
 
 def find_token_positions_flexible(tokenizer, input_ids, phrase, logger=None, log_prefix=""):
     """
-    Attempt matches:
+    Attempt matches in order:
       1) direct sublist
       2) leading-space sublist
-      3) substring offset approach
+      3) punctuation-agnostic substring approach
     """
     phrase = phrase.strip()
     if not phrase:
@@ -123,10 +173,10 @@ def find_token_positions_flexible(tokenizer, input_ids, phrase, logger=None, log
             logger.debug(f"{log_prefix}Leading-space sublist -> positions={lead}")
         return lead
 
-    # 3) substring offset approach
-    sub_pos = substring_offset_mapping(tokenizer, input_ids, phrase)
+    # 3) punctuation-agnostic fallback
+    sub_pos = substring_offset_mapping_punc_agnostic(tokenizer, input_ids, phrase)
     if logger:
-        logger.debug(f"{log_prefix}Substring fallback -> positions={sub_pos}")
+        logger.debug(f"{log_prefix}Punc-agnostic fallback -> positions={sub_pos}")
     return sub_pos
 
 
@@ -291,8 +341,10 @@ def run_attention_analysis(
 
             # 7e) For each type ("harmful", "actionable"), find matched positions
             #     Then measure fraction of attention per layer/head
-            for phrase_type, phrase_str in [("harmful", harmful_str),
-                                            ("actionable", actionable_str)]:
+            for phrase_type, phrase_str in [
+                ("harmful", harmful_str),
+                ("actionable", actionable_str)
+            ]:
 
                 matched_positions = find_token_positions_flexible(
                     tokenizer,
@@ -304,6 +356,7 @@ def run_attention_analysis(
 
                 # Now compute fraction of attention over matched tokens
                 for layer_idx, attn_batch in enumerate(attentions_list):
+                    # shape: (batch_size, n_heads, seq_len, seq_len)
                     attn_l = attn_batch[i_in_batch]  # shape [n_heads, seq_len, seq_len]
                     n_heads = attn_l.shape[0]
                     for h_idx in range(n_heads):
