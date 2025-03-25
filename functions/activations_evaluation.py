@@ -14,7 +14,7 @@ def load_analysis_results(path):
     """
     if not os.path.exists(path):
         raise FileNotFoundError(f"Analysis results file not found at: {path}")
-    return torch.load(path, map_location="cpu")
+    return torch.load(path, map_location="cpu", weights_only=False)
 
 def plot_pca_scatter(pca_results, title="PCA Scatter Plot"):
     """
