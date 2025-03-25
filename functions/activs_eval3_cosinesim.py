@@ -8,7 +8,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 def load_analysis_results(path):
     if not os.path.exists(path):
         raise FileNotFoundError(f"File not found: {path}")
-    return torch.load(path, map_location="cpu")
+    return torch.load(path, map_location="cpu", weights_only=False)
 
 def compute_mean_activations(analysis_results, aggregation_method="mean_all"):
     """
