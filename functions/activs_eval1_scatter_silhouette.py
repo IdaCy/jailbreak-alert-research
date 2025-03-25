@@ -128,7 +128,7 @@ def run_activation_evaluation(analysis_result_path, n_clusters=3, save_dir=None)
     pca_results = results.get("pca_2d", {})
     prompt_type = results.get("prompt_type", "Unknown")
 
-    # If save_dir is provided, create it
+    # If save_dir is provided, create it and save the PCA scatter plot
     if save_dir:
         os.makedirs(save_dir, exist_ok=True)
         plt_path = os.path.join(save_dir, f"pca_scatter_{prompt_type}.png")
@@ -154,8 +154,11 @@ def run_activation_evaluation(analysis_result_path, n_clusters=3, save_dir=None)
     # Save clustering scores to a JSON file if save_dir is provided
     if save_dir:
         score_path = os.path.join(save_dir, f"clustering_scores_{prompt_type}.json")
+        # Convert numpy float32 values to native Python floats for JSON serialization
+        clustering_scores_serializable = {str(layer): (float(score) if score is not None else None)
+                                          for layer, score in clustering_scores.items()}
         with open(score_path, 'w') as f:
-            json.dump(clustering_scores, f, indent=2)
+            json.dump(clustering_scores_serializable, f, indent=2)
 
     # Save all evaluation outputs (aggregator outputs, PCA results, clustering scores, prompt type)
     evaluation_outputs = {
