@@ -16,7 +16,7 @@ def load_analysis_results(path):
         raise FileNotFoundError(f"Analysis results file not found at: {path}")
     return torch.load(path, map_location="cpu", weights_only=False)
 
-def plot_pca_scatter(pca_results, title="PCA Scatter Plot"):
+def plot_pca_scatter(pca_results, title="PCA Scatter Plot", save_path=None):
     """
     Plots a scatter plot of PCA(2D) results.
     
@@ -35,7 +35,11 @@ def plot_pca_scatter(pca_results, title="PCA Scatter Plot"):
         ax.legend()
     plt.suptitle(title)
     plt.tight_layout(rect=[0, 0, 1, 0.95])
-    plt.show()
+    if save_path:
+        plt.savefig(save_path)
+        plt.close()
+    else:
+        plt.show()
 
 def perform_kmeans_on_activations(activations, n_clusters=3):
     """
