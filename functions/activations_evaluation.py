@@ -1,112 +1,137 @@
+# file: functions/analysis_evaluation.py
 import os
-import glob
-import json
 import torch
 import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
 
-# =============================================================================
-# 1. Helper functions for plotting and analysis
-# =============================================================================
-
-def load_attention_csv(csv_path):
-    """Load the attention analysis CSV file into a pandas DataFrame."""
-    if not os.path.exists(csv_path):
-        raise FileNotFoundError(f"CSV file not found: {csv_path}")
-    df = pd.read_csv(csv_path)
-    return df
-
-def plot_attention_heatmap(df, phrase_type="harmful", out_dir="plots", prompt_key="attack"):
+def load_analysis_results(path):
     """
-    For a given phrase type (e.g. 'harmful' or 'actionable'), plot a heatmap 
-    of average fraction_attention per (layer, head) across all samples.
+    Load the analysis results from a .pt file.
+    Returns a dictionary with keys like "aggregator_outputs" and "pca_2d".
     """
-    os.makedirs(out_dir, exist_ok=True)
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Analysis results file not found at: {path}")
+    return torch.load(path, map_location="cpu")
+
+def plot_pca_scatter(pca_results, title="PCA Scatter Plot"):
+    """
+    Plots a scatter plot of PCA(2D) results.
     
-    # Group by layer and head and compute the mean fraction_attention
-    summary = df[df["phrase_type"] == phrase_type].groupby(["layer", "head"])["fraction_attention"].mean().reset_index()
-    
-    # Pivot for heatmap: rows=layer, columns=head
-    pivot = summary.pivot(index="layer", columns="head", values="fraction_attention")
-    
-    plt.figure(figsize=(10, 6))
-    plt.imshow(pivot, aspect='auto', interpolation="nearest")
-    plt.colorbar(label="Avg. Fraction Attention")
-    plt.title(f"Heatmap of {phrase_type} Attention (Prompt: {prompt_key})")
-    plt.xlabel("Head")
-    plt.ylabel("Layer")
-    plt.xticks(ticks=range(pivot.shape[1]), labels=pivot.columns)
-    plt.yticks(ticks=range(pivot.shape[0]), labels=pivot.index)
-    heatmap_path = os.path.join(out_dir, f"attention_heatmap_{prompt_key}_{phrase_type}.png")
-    plt.savefig(heatmap_path)
-    plt.close()
-    print(f"Saved heatmap to: {heatmap_path}")
-
-def plot_attention_by_layer(df, phrase_type="harmful", out_dir="plots", prompt_key="attack"):
+    pca_results: dict, with keys being layer numbers (or strings) and values being a dict mapping
+                 aggregation methods (e.g. 'last_token', 'last_few', 'mean_all') to np.array of shape (N,2).
     """
-    Create bar plots for each layer showing the distribution of fraction_attention per head.
-    """
-    os.makedirs(out_dir, exist_ok=True)
-    layers = sorted(df["layer"].unique())
-    for layer in layers:
-        sub_df = df[(df["layer"] == layer) & (df["phrase_type"] == phrase_type)]
-        summary = sub_df.groupby("head")["fraction_attention"].agg(["mean", "std", "median"]).reset_index()
-        plt.figure(figsize=(8, 4))
-        plt.bar(summary["head"], summary["mean"], yerr=summary["std"], capsize=5)
-        plt.xlabel("Head")
-        plt.ylabel("Mean Fraction Attention")
-        plt.title(f"Layer {layer} ({phrase_type}) - Prompt: {prompt_key}")
-        plt.xticks(summary["head"])
-        plot_path = os.path.join(out_dir, f"attention_layer_{layer}_{prompt_key}_{phrase_type}.png")
-        plt.savefig(plot_path)
-        plt.close()
-        print(f"Saved bar plot for layer {layer} to: {plot_path}")
-
-def load_activation_analysis_results(pt_path):
-    """Load the minimal activation analysis results from a .pt file."""
-    if not os.path.exists(pt_path):
-        raise FileNotFoundError(f"File not found: {pt_path}")
-    results = torch.load(pt_path, map_location="cpu")
-    return results
-
-def plot_pca_scatter(pca_results, out_dir="plots", prompt_type="attack"):
-    """
-    For each layer and aggregation method, plot the PCA(2D) scatter plots.
-    pca_results should be a dict with structure: 
-      { layer: { agg_method: np.array(shape=(N,2)) } }
-    """
-    os.makedirs(out_dir, exist_ok=True)
-    for layer, methods in pca_results.items():
-        for method, coords in methods.items():
-            if coords.shape[0] == 0:
+    num_layers = len(pca_results)
+    fig, axes = plt.subplots(num_layers, 1, figsize=(8, num_layers * 4), squeeze=False)
+    for i, (layer, methods) in enumerate(pca_results.items()):
+        ax = axes[i][0]
+        for method, data in methods.items():
+            if data.shape[0] == 0:
                 continue
-            plt.figure(figsize=(6, 5))
-            plt.scatter(coords[:, 0], coords[:, 1], alpha=0.7, s=20)
-            plt.title(f"PCA Scatter - Layer {layer}, Method: {method}\nPrompt: {prompt_type}")
-            plt.xlabel("PC1")
-            plt.ylabel("PC2")
-            scatter_path = os.path.join(out_dir, f"pca_layer_{layer}_{method}_{prompt_type}.png")
-            plt.savefig(scatter_path)
-            plt.close()
-            print(f"Saved PCA scatter plot to: {scatter_path}")
+            ax.scatter(data[:, 0], data[:, 1], label=method, alpha=0.6)
+        ax.set_title(f"Layer {layer}")
+        ax.legend()
+    plt.suptitle(title)
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
+    plt.show()
 
-def run_kmeans_on_pca(coords, n_clusters=2):
+def perform_kmeans_on_activations(activations, n_clusters=3):
     """
-    Optionally run k-means clustering on PCA coordinates and return the cluster labels.
+    Performs KMeans clustering on the given activation data.
+    
+    activations: numpy array of shape (N, hidden_dim)
+    n_clusters: int, number of clusters to form.
+    
+    Returns:
+      - labels: cluster assignments (numpy array)
+      - silhouette: silhouette score (float) for the clustering.
     """
-    if coords.shape[0] < n_clusters:
-        return np.zeros(coords.shape[0], dtype=int)
+    if activations.shape[0] < n_clusters:
+        return None, None
     kmeans = KMeans(n_clusters=n_clusters, random_state=42)
-    labels = kmeans.fit_predict(coords)
-    return labels
+    labels = kmeans.fit_predict(activations)
+    silhouette = silhouette_score(activations, labels)
+    return labels, silhouette
 
-def plot_kmeans_clusters(coords, labels, layer, method, prompt_type, out_dir="plots"):
-    """Plot the PCA scatter with k-means cluster labels overlaid."""
-    os.makedirs(out_dir, exist_ok=True)
-    plt.figure(figsize=(6, 5))
-    scatter = plt.scatter(coords[:, 0], coords[:, 1], c=labels, cmap="viridis", alpha=0.7, s=20)
-    plt.title(f"KMeans Clusters - Layer {layer}, Method: {method}\nPrompt: {prompt_type}")
-    plt.xlabel("PC1")
+def evaluate_clustering(aggregator_outputs, n_clusters=3):
+    """
+    Evaluates clustering on the aggregated activations using KMeans for each layer and aggregation method.
+    
+    aggregator_outputs: dict mapping layer -> method -> numpy array of shape (N, hidden_dim)
+    
+    Returns:
+      A dict of the form { layer: { method: silhouette_score } }
+    """
+    scores = {}
+    for layer, methods in aggregator_outputs.items():
+        scores[layer] = {}
+        for method, data in methods.items():
+            if data.size == 0 or data.shape[0] < n_clusters:
+                scores[layer][method] = None
+            else:
+                _, score = perform_kmeans_on_activations(data, n_clusters=n_clusters)
+                scores[layer][method] = score
+    return scores
+
+def compare_prompt_types(result_paths):
+    """
+    Given a dictionary mapping prompt type names to analysis results file paths,
+    load each and compute overall activation means per layer and aggregation method.
+    
+    Returns a dict:
+      { prompt_type: { layer: { method: mean_activation_vector (np.array) } } }
+    """
+    summary = {}
+    for prompt_type, path in result_paths.items():
+        res = load_analysis_results(path)
+        means = {}
+        aggregator_outputs = res.get("aggregator_outputs", {})
+        for layer, methods in aggregator_outputs.items():
+            means[layer] = {}
+            for method, data in methods.items():
+                if data.size == 0:
+                    means[layer][method] = None
+                else:
+                    means[layer][method] = np.mean(data, axis=0)
+        summary[prompt_type] = means
+    return summary
+
+def run_activation_evaluation(analysis_result_path, n_clusters=3):
+    """
+    Runs a complete evaluation on a single analysis result file:
+      - Loads the analysis results.
+      - Plots the PCA(2D) scatter plots.
+      - Performs KMeans clustering on the "mean_all" aggregated activations for each layer.
+    
+    Parameters:
+      analysis_result_path: str, path to your analysis_results.pt file.
+      n_clusters: int, number of clusters for KMeans.
+      
+    Returns:
+      A dictionary mapping each layer to its clustering silhouette score (using the "mean_all" method).
+    """
+    results = load_analysis_results(analysis_result_path)
+    aggregator_outputs = results.get("aggregator_outputs", {})
+    pca_results = results.get("pca_2d", {})
+    prompt_type = results.get("prompt_type", "Unknown")
+    
+    # Plot PCA results.
+    plot_pca_scatter(pca_results, title=f"PCA Scatter Plot for prompt type '{prompt_type}'")
+    
+    # Evaluate clustering using the "mean_all" aggregation.
+    clustering_scores = {}
+    for layer, methods in aggregator_outputs.items():
+        data = methods.get("mean_all", None)
+        if data is not None and data.shape[0] >= n_clusters:
+            _, score = perform_kmeans_on_activations(data, n_clusters=n_clusters)
+            clustering_scores[layer] = score
+        else:
+            clustering_scores[layer] = None
+    
+    print("Clustering silhouette scores (using 'mean_all' aggregation):")
+    for layer, score in clustering_scores.items():
+        print(f"  Layer {layer}: {score}")
+    
+    return clustering_scores
