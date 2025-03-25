@@ -17,7 +17,7 @@ def load_analysis_results(path):
     return torch.load(path, map_location="cpu", weights_only=False)
 
 def plot_pca_scatter(pca_results, title="PCA Scatter Plot", save_path=None):
-    """
+    """s
     Plots a scatter plot of PCA(2D) results.
     
     pca_results: dict, with keys being layer numbers (or strings) and values being a dict mapping
