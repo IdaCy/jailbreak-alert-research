@@ -12,7 +12,7 @@ def load_analysis_results(path):
 def overlay_pca_scatter(result_paths, aggregation_method="mean_all"):
     """
     Overlays PCA scatter plots for a specific aggregation method across multiple prompt types.
-    
+    s
     result_paths: dict mapping prompt type (string) to analysis result file path.
     aggregation_method: which aggregation method to plot.
     """
